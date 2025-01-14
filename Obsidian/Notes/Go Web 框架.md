@@ -133,6 +133,7 @@ Engine struct {
 中间件和路由映射的 Handler 一致，处理的输入是 Context 对象。插入点是框架接收到请求初始化 Context 对象之后，允许用户使用自己定义的中间件做一些额外的处理，例如记录日志等，对 Context 进行二次加工。另外，通过调用 `(*Context).Next()` 函数，中间件可以等待用户自己定义的 Handler 处理结束之后，再做一些额外的操作。`c.Next()` 表示等待执行其他的中间件或用户的 `Handler`。
 
 ```go
+// 中间件通过 c.Next() 控制执行流程，允许在请求处理前后执行额外逻辑
 func Logger() HandlerFunc {  
 	return func(c *Context) {   
 		t := time.Now() // handler 之前执行
@@ -195,6 +196,7 @@ func main() {
 对于一个 Web 框架，错误处理机制是非常必要的。因此，需要实现 Recovery 中间件，这个也很简单，只需要使用 defer 挂载上错误恢复函数，在这个函数中调用 recover()，捕获 panic 然后恢复程序。也容易知道，Recover 应该是第一个中间件，这样才能恢复所有中间件和处理函数的错误。
 
 ```go
+// Recovery 中间件通过 recover() 捕获 panic，防止程序崩溃
 func Recovery() HandlerFunc {  
 	return func(c *Context) {  
 		defer func() {  
@@ -208,3 +210,6 @@ func Recovery() HandlerFunc {
 	}  
 }
 ```
+
+## 8 Gin 框架
+
