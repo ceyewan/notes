@@ -1,11 +1,9 @@
 这是一个使用 Go 的 `net/http` 标准库来实现一个 Web 框架的一个小项目，参考的是 Gin 框架的实现。代码其实都比较简单，这里主要关注的是，如何设计，从而能够将标准库封装为一个框架。
-
 ## 1 为什么要框架
 
 `net/http` 提供了基础的 Web 功能，即监听端口，映射静态路由，解析 HTTP 报文。一些 Web 开发中简单的需求并不支持，需要手工实现。
 - 动态路由：例如 `hello/:name` 这类的规则。
 - 鉴权：分组统一鉴权的能力。
-
 ## 2 http.Handler
 
 标准库提供了几种函数，第一种就是监听特定的端口并启动 HTTP 服务；第二个函数就是为特定地址的请求创建处理函数。
@@ -48,7 +46,6 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 // 注册处理函数，存储到 router 中
 ```
-
 ## 3 上下文 Context
 
 用户要写 handlerFunc 还是很麻烦，要处理 http.ResponseWriter 和 http.Request。因此这部分将会设计**上下文**（Context）这个结构体，封装 Request 和 Response，并提供对 JSON、HTML 的支持。
@@ -106,5 +103,31 @@ func handler(c *gee.Context) {
 
 ## 5 分组控制
 
+分组控制(Group Control)是 Web 框架应提供的基础功能之一。所谓分组，是指路由的分组。如果没有路由分组，我们需要针对每一个路由进行控制。但是真实的业务场景中，往往某一组路由需要相似的处理。比如中间件，有些路由需要认证，而另外一些路由不需要认证。
 
+那么，一个 Group 需要具备的属性有前缀（用于确定分组），并且中间件也是应用在分组上。此外，Group 对象还需要有访问 Router 的能力，为了方便，可以直接访问 engine。并且 Group 是一个递归结构。
 
+```go
+RouterGroup struct {  
+	prefix      string  
+	middlewares []HandlerFunc // support middleware  
+	parent      *RouterGroup  // support nesting  
+	engine      *Engine       // all groups share a Engine instance  
+}
+// Engine 抽象为最顶层的分组，也就是 Engine 也拥有 RouterGroup 的能力
+Engine struct {  
+	*RouterGroup  // 匿名嵌套结构体
+	router *router  
+	groups []*RouterGroup // store all groups  
+}
+// 接下来无论有没有分组，注册函数都是在分组上注册的
+```
+
+> **匿名嵌套结构体**：实现了一种轻量级的**继承**机制，允许嵌套结构体的字段和方法直接提升为外部结构体的成员。嵌套的匿名字段的所有字段和方法会自动提升到外层结构体 Engine，使得外层结构体可以直接访问内层结构体的方法或字段，就像它们属于外层结构体一样。
+## 6 中间件 Middleware
+
+中间件是位于请求和响应处理流程中的逻辑组件，用于对请求进行处理、修改、或执行特定功能（如认证、日志记录）。它是 Web 框架中一个重要的设计模式。
+1. **预处理请求**：在请求被路由到目标处理函数之前，对请求数据进行检查、修改、或者添加额外的上下文信息。
+2. **后处理响应**：在响应被返回给客户端之前，对响应数据进行修改、格式化、或者记录。
+
+中间件和路由映射的 Handler 一致，处理的输入是 Context 对象。插入点是框架接收到请求初始化 Context 对象之后，允许用户使用自己定义的一些
