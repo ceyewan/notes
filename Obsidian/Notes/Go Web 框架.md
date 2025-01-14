@@ -130,4 +130,81 @@ Engine struct {
 1. **预处理请求**：在请求被路由到目标处理函数之前，对请求数据进行检查、修改、或者添加额外的上下文信息。
 2. **后处理响应**：在响应被返回给客户端之前，对响应数据进行修改、格式化、或者记录。
 
-中间件和路由映射的 Handler 一致，处理的输入是 Context 对象。插入点是框架接收到请求初始化 Context 对象之后，允许用户使用自己定义的一些
+中间件和路由映射的 Handler 一致，处理的输入是 Context 对象。插入点是框架接收到请求初始化 Context 对象之后，允许用户使用自己定义的中间件做一些额外的处理，例如记录日志等，对 Context 进行二次加工。另外，通过调用 `(*Context).Next()` 函数，中间件可以等待用户自己定义的 Handler 处理结束之后，再做一些额外的操作。`c.Next()` 表示等待执行其他的中间件或用户的 `Handler`。
+
+```go
+func Logger() HandlerFunc {  
+	return func(c *Context) {   
+		t := time.Now() // handler 之前执行
+		c.Next() // handler
+		log.Printf("[%d] %s in %v", c.StatusCode, c.Req.RequestURI, time.Since(t))  
+	}  
+}
+```
+
+中间件信息也保留在 Context 中，即在 Context 中添加一个函数数组，表示中间件函数，并且为 Context 实现 Next() 方法，调用下一个处理函数。
+
+```go
+type Context struct {  
+	// ...
+	// middleware  
+	handlers []HandlerFunc  // 中间件+handler
+	index    int  
+}
+func (c *Context) Next() {  
+	c.index++  
+	s := len(c.handlers)  
+	for ; c.index < s; c.index++ {  
+		c.handlers[c.index](c)  
+	}  
+}
+// 添加中间件，包括父节点的中间件
+func (group *RouterGroup) Use(middlewares ...HandlerFunc) {  
+	group.middlewares = append(group.middlewares, middlewares...)  
+}
+```
+
+在接收到一个具体的请求时，要判断该请求适用于哪些中间件，得到中间件列表后，赋值给 `c.handlers`。在路由匹配时，还需要将得到的 Handler 添加到 `c.handlers` 列表中，执行 `c.Next()`。也就是说，可以认为中间件和 handler 函数差不多。一个函数调用一个 c.Next()，直到所有的处理函数都执行完成。
+
+## 7 错误恢复
+
+Go 语言中，比较常见的错误处理方法是返回 error，由调用者决定后续如何处理。但是如果是无法恢复的错误或者手动触发 panic，都会中止当前执行的程序，退出。但是 panic 导致的程序中止在退出之前，会先处理完当前协程上已经 defer 的任务，执行完成之后再退出，类似于 `try...catch`。
+
+Go 语言还提供了 recover 函数，可以避免因为 panic 发生而导致整个程序终止，recover 函数只在 defer 中生效。
+
+```go
+// hello.go  
+func test_recover() {  
+	defer func() {  
+		fmt.Println("defer func")  
+		if err := recover(); err != nil {  
+			fmt.Println("recover success")  // 输出
+		}  
+	}()  
+	arr := []int{1, 2, 3}  
+	fmt.Println(arr[4])  		// 不输出
+	fmt.Println("after panic")  // 不输出
+}  
+  
+func main() {  
+	test_recover()  
+	fmt.Println("after recover")  // 输出
+}
+```
+
+对于一个 Web 框架，错误处理机制是非常必要的。因此，需要实现 Recovery 中间件，这个也很简单，只需要使用 defer 挂载上错误恢复函数，在这个函数中调用 recover()，捕获 panic 然后恢复程序。也容易知道，Recover 应该是第一个中间件，这样才能恢复所有中间件和处理函数的错误。
+
+```go
+func Recovery() HandlerFunc {  
+	return func(c *Context) {  
+		defer func() {  
+			if err := recover(); err != nil {  
+				message := fmt.Sprintf("%s", err)  
+				log.Printf("%s\n\n", trace(message))  
+				c.Fail(http.StatusInternalServerError, "Internal Server Error")  
+			}  
+		}()  
+		c.Next()  
+	}  
+}
+```
