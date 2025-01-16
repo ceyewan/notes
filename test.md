@@ -1,18 +1,41 @@
 ```mermaid
-flowchart TD
-    Start[开始] --> Parse[捕获并解析 Beacon 帧]
-    Parse --> HECap{是否存在 HE Capabilities IE？}
-    HECap -->|是| AX[802.11ax]
-    HECap -->|否| VHTCap{是否存在 VHT Capabilities IE？}
-    VHTCap -->|是| AC[802.11ac]
-    VHTCap -->|否| HTCap{是否存在 HT Capabilities IE？}
-    HTCap -->|是| ERP1{是否存在 ERP IE？}
-    HTCap -->|否| ERP2{是否存在 ERP IE？}
-    ERP1 -->|是| BGN[802.11b/g/n]
-    ERP1 -->|否| AN[802.11a/n]
-    ERP2 -->|是| BG[802.11b/g]
-    ERP2 -->|否| Freq{工作频率 > 5000 Hz？}
-    Freq -->|是| A[802.11a]
-    Freq -->|否| B[802.11b]
+graph TB
+    subgraph Browser["浏览器"]
+        UI["用户界面"]
+    end
+
+    subgraph Server["服务器"]
+        API["API服务"]
+        Auth["认证授权"]
+        
+        subgraph Database["数据库"]
+            UserTable["用户表"]
+            AccountTable["账户表"]
+            TxTable["交易表"]
+            OpLogTable["操作表"]
+        end
+        
+        subgraph Blockchain["区块链模块"]
+            Geth["Geth客户端"]
+            TxBroadcast["交易广播"]
+        end
+    end
+    
+    subgraph Ethereum["以太坊网络"]
+        ETH["以太坊节点"]
+    end
+    
+    subgraph Offline["离线签名系统"]
+        Sign["交易签名"]
+    end
+
+    UI -->|HTTP请求| API
+    API -->|认证| Auth
+    API -->|CRUD| Database
+    Browser -->|发送待签名交易| Offline
+    Offline -->|返回签名后交易| Browser
+    API -->|广播交易| TxBroadcast
+    TxBroadcast -->|发送交易| Geth
+    Geth <-->|同步| ETH
 ```
 
