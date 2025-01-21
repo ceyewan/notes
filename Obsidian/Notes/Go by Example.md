@@ -201,4 +201,119 @@ func main() {
 ```
 ## 17 指针
 
-Go 支持指针，允许在程序中通过**引用传递**来传递值和数据结构。通过 `&i` 语法来取得 `i` 的内存地址，即指向 `i` 的指针。
+Go 支持指针，允许在程序中通过**引用传递**来传递值和数据结构。通过 `&i` 语法来取得 `i` 的内存地址，即指向 `i` 的指针。函数体内的 `*iptr` 会 _解引用_ 这个指针，从它的内存地址得到这个地址当前对应的值。
+
+## 18 字符串和 rune 类型
+
+Go 语言中的字符串是一个只读的 byte 类型的切片。 Go 语言和标准库特别对待字符串作为以 UTF-8 为编码的文本容器。在其他语言当中，字符串由”字符”组成。
+
+在Go语言当中，字符的概念被称为 `rune`：
+- 是 Go 中的内建类型，实际是 int32 类型的别名。
+- 用于表示 Unicode 代码点，可以处理多字节字符。
+
+```go
+func main() {
+	// 定义一个字符串
+	str := "Go语言"
+	// 遍历字符串（按字节）
+	fmt.Println("按字节遍历:")
+	for i := 0; i < len(str); i++ {
+		fmt.Printf("索引 %d: %x\n", i, str[i]) // 输出字节的十六进制值
+	}
+	// 按 rune 遍历（Unicode 代码点）
+	fmt.Println("\n按 Unicode 遍历:")
+	for i, r := range str {
+		fmt.Printf("索引 %d: %c (Unicode: %U)\n", i, r, r) // 输出字符和代码点
+	}
+	// 字符串与 rune 转换
+	fmt.Println("\n字符串与 rune 转换:")
+	runes := []rune(str) // 转换为 rune 切片
+	fmt.Printf("runes: %v\n", runes) // 输出代码点
+	fmt.Println("还原为字符串:", string(runes)) // 还原为字符串
+}
+```
+
+## 19 结构体
+
+Go 的结构体(struct)是带类型的字段(fields)集合。这在组织数据时非常有用。这是一个可变(mutable)数据类型，即不可对它进行哈希。
+
+## 20 方法
+
+Go 支持为结构体类型定义**方法**(methods) 。
+
+```go
+type rect struct {
+    width, height int
+}
+func (r *rect) area() int { // 为指针类型的接收者定义方法
+    return r.width * r.height
+}
+func (r rect) perim() int { // 为值类型的接收者定义方法
+    return 2*r.width + 2*r.height
+}
+```
+
+调用方法时，Go 会自动处理值和指针之间的转换。为了避免在调用方法时产生一个拷贝，可以使用指针来调用方法；但是使用指针来调用方法也会导致对结构体的修改作用到元素上。
+
+## 21 接口
+
+要在 Go 中实现一个接口，我们只需要实现接口中的所有方法。如果一个变量实现了某个接口，我们就可以调用指定接口中的方法。
+
+```go
+type geometry interface {
+    area() float64
+    perim() float64
+}
+```
+
+这是一个几何体的基本接口，如果我们为圆形或者方形实现了这两个方法，那么他们就能当成 geometry 来用。
+
+## 22 Embedding
+
+Go 支持对于结构体(struct)和接口(interfaces)的**嵌入**(embedding)以表达一种更加无缝的组合(composition)类型。
+- 结构体嵌入允许一个结构体包含另一个结构体作为字段，而不需要显式声明字段名。嵌入的结构体方法和字段会“提升”到外层结构体中。
+- 接口嵌入允许一个接口包含多个接口或方法，从而形成更复杂的接口。
+
+```go
+type base struct {
+    num int
+}
+func (b base) describe() string {
+    return fmt.Sprintf("base with num=%v", b.num)
+}
+type container struct {
+    base
+    str string
+}
+```
+
+如上，container 类型的变量会拥有 base 的变量和 base 的方法。
+
+```go
+// 定义基础接口
+type Speaker interface {
+    Speak()
+}
+type Greeter interface {
+    Greet()
+}
+// 嵌入接口
+type Human interface {
+    Speaker
+    Greeter
+}
+```
+
+## 23 泛型
+
+```go
+func MapKeys[K comparable, V any](m map[K]V) []K {
+    r := make([]K, 0, len(m))
+    for k := range m {
+        r = append(r, k)
+    }
+    return r
+}
+```
+
+`MapKeys` 接受任意类型的Map并返回其Key的切片。这个函数有2个类型参数 `K` 和 `V`； `K` 是 `comparable` 类型，也就是说我们可以通过 `==` 和 `!=` 操作符对这个类型的值进行比较。这是Go中Map的Key所必须的。 `V` 是 `any` 类型，意味着它不受任何限制 (`any` 是 `interface{}` 的别名类型)。
