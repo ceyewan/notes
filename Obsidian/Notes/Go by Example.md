@@ -362,3 +362,110 @@ func main() {
 
 默认情况下，通道是 _无缓冲_ 的，这意味着只有对应的接收（`<- chan`） 通道准备好接收时，才允许进行发送（`chan <-`）。 _有缓冲通道_ 允许在没有对应接收者的情况下，缓存一定数量的值。
 
+```go
+messages := make(chan string, 2)
+messages <- "buffered"
+messages <- "channel"
+fmt.Println(<-messages)
+fmt.Println(<-messages)
+```
+
+## 28 通道同步
+
+```go
+func worker(done chan bool) {
+    fmt.Print("working...")
+    time.Sleep(time.Second)
+    fmt.Println("done")
+    done <- true
+}
+func main() {
+    done := make(chan bool, 1)
+    go worker(done)
+    <-done
+}
+```
+
+使用  `done` 通道将被用于通知其他协程这个函数已经完成工作，即实现同步。
+
+## 29 通道方向
+
+当使用通道作为函数的参数时，你可以指定这个通道是否为只读或只写。该特性可以提升程序的类型安全。
+
+```go
+func ping(pings chan<- string, msg string) {
+    pings <- msg
+}
+func pong(pings <-chan string, pongs chan<- string) {
+    msg := <-pings
+    pongs <- msg
+}
+```
+
+## 30 通道选择器
+
+Go 的**选择器**（select）让你可以同时等待多个通道操作。将协程、通道和选择器结合，是 Go 的一个强大特性。
+
+```go
+func main() {
+    c1 := make(chan string)
+    c2 := make(chan string)
+    go func() {
+        time.Sleep(1 * time.Second)
+        c1 <- "one"
+    }()
+    go func() {
+        time.Sleep(2 * time.Second)
+        c2 <- "two"
+    }()
+    for i := 0; i < 2; i++ {
+        select {
+        case msg1 := <-c1:
+            fmt.Println("received", msg1)
+        case msg2 := <-c2:
+            fmt.Println("received", msg2)
+        }
+    }
+}
+```
+
+## 31 超时处理
+
+**超时** 对于一个需要连接外部资源，或者有耗时较长的操作的程序而言是很重要的。得益于通道和 `select `，在 Go 中实现超时操作是简洁而优雅的。
+
+```go
+c1 := make(chan string, 1)
+    go func() {
+        time.Sleep(2 * time.Second)
+        c1 <- "result 1"
+    }()
+select {
+case res := <-c1:
+	fmt.Println(res)
+case <-time.After(1 * time.Second):
+	fmt.Println("timeout 1")
+}
+```
+
+## 32 非阻塞通道
+
+常规的通过通道发送和接收数据是阻塞的。然而，我们可以使用带一个 `default` 子句的 `select` 来实现**非阻塞**的发送、接收，甚至是非阻塞的多路 `select`。
+
+```go
+messages := make(chan string)
+signals := make(chan bool)
+select {
+case msg := <-messages:
+	fmt.Println("received message", msg)
+case sig := <-signals:
+	fmt.Println("received signal", sig)
+default:
+	fmt.Println("no activity")
+}
+```
+
+我们可以在 `default` 前使用多个 `case` 子句来实现一个多路的非阻塞的选择器。这里我们试图在 `messages` 和 `signals` 上同时使用非阻塞的接收操作。
+
+## 33 通道的关闭
+
+关闭一个通道意味着不能再向这个通道发送值了。 该特性可以向通道的接收方传达工作已经完成的信息。
