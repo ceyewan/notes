@@ -317,3 +317,48 @@ func MapKeys[K comparable, V any](m map[K]V) []K {
 ```
 
 `MapKeys` 接受任意类型的Map并返回其Key的切片。这个函数有2个类型参数 `K` 和 `V`； `K` 是 `comparable` 类型，也就是说我们可以通过 `==` 和 `!=` 操作符对这个类型的值进行比较。这是Go中Map的Key所必须的。 `V` 是 `any` 类型，意味着它不受任何限制 (`any` 是 `interface{}` 的别名类型)。
+
+## 24 错误处理
+
+符合 Go 语言习惯的做法是使用一个独立、明确的返回值来传递错误信息。Go 语言的处理方式能清楚的知道哪个函数返回了错误，并使用跟其他（无异常处理的）语言类似的方式来处理错误。返回错误值为 nil 代表没有错误。
+
+## 25 协程 goroutine
+
+协程是轻量级的执行线程。
+
+```go
+func f(from string) {
+    for i := 0; i < 3; i++ {
+        fmt.Println(from, ":", i)
+    }
+}
+func main() {
+    f("direct")
+    go f("goroutine")
+    go func(msg string) {
+        fmt.Println(msg)
+    }("going")
+    time.Sleep(time.Second)
+    fmt.Println("done")
+}
+```
+
+使用 `go f(s)` 在一个协程中调用这个函数。这个新的 Go 协程将会**并发地**执行这个函数。也可以为匿名函数启动一个协程。
+## 26 通道
+
+通道(channels) 是连接多个协程的管道。你可以从一个协程将值发送到通道，然后在另一个协程中接收。
+
+```go
+func main() {
+    messages := make(chan string) // 创建一个 string 类型的通道
+    go func() { messages <- "ping" }() // 向通道中写值
+    msg := <-messages	// 从通道中读值
+    fmt.Println(msg)
+}
+```
+
+默认发送和接收操作是**阻塞**的，直到发送方和接收方都就绪。这个特性允许我们，不使用任何其它的同步操作，就可以在程序结尾处等待消息 `"ping"`。
+## 27 通道缓冲
+
+默认情况下，通道是 _无缓冲_ 的，这意味着只有对应的接收（`<- chan`） 通道准备好接收时，才允许进行发送（`chan <-`）。 _有缓冲通道_ 允许在没有对应接收者的情况下，缓存一定数量的值。
+
