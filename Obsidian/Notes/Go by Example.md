@@ -699,4 +699,52 @@ func main() {
 }
 ```
 
-我们为该类型实现了 `sort.Interface` 接口的 `Len`、`Less` 和 `Swap` 方法， 这样我们就可以使用 `sort` 包的通用 `Sort` 方法了， `Len` 和 `Swap` 在各个类型中的实现都差不多， `Less` 将控制实际的自定义排序逻辑。
+我们为该类型实现了 `sort.Interface` 接口的 `Len`、`Less` 和 `Swap` 方法，这样我们就可以使用 `sort` 包的通用 `Sort` 方法了， `Len` 和 `Swap` 在各个类型中的实现都差不多， `Less` 将控制实际的自定义排序逻辑。
+
+## 45 Panic
+
+`panic` 意味着有些出乎意料的错误发生。通常我们用它来表示程序正常运行中不应该出现的错误，或者我们不准备优雅处理的错误。即程序会崩溃了。不可修复的 error 才会触发 panic。
+
+```go
+func main() {
+    panic("a problem")
+    _, err := os.Create("/tmp/file")
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+## 46 Recover
+
+Go 通过使用 `recover` 内置函数，可以从 panic 中恢复 recover。 `recover` 可以阻止 `panic` 中止程序，并让它继续执行。
+
+```go
+func mayPanic() {
+    panic("a problem")
+}
+
+func main() {
+
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Recovered. Error:", r)
+        }
+    }()
+    panic("a problem")
+    fmt.Println("After mayPanic()") // 不会执行到这一步
+}
+```
+
+## 47 Defer
+
+用于确保程序在执行完成后，会调用某个函数，一般是执行清理工作。比如加锁时解锁、打开文件时关闭文件。
+
+```go
+func (c *Container) inc(name string) {
+	c.mu.Lock()
+    defer c.mu.Unlock()
+    c.counters[name]++
+}
+```
+
