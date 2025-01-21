@@ -7,9 +7,14 @@
 5. Gin+Gorm+Redis，Web+数据库
 6. [Go 语言高级编程](https://chai2010.cn/advanced-go-programming-book/)，包括 CGO、RPC、Web、分布式等
 ## 2 Go 项目
+
 1. Go-Admin
 2. 七天系列
 3. MIT6824
 4. [Godis](https://github.com/HDT3213/godis)
 5. [区块链](https://github.com/Jeiwan/blockchain_go)
-6. 
+
+## 3 LeetCode
+
+1. [LeetCode-Go](https://books.halfrost.com/leetcode/)
+2. [LeetCode-101](https://github.com/changgyhub/leetcode_101)
