@@ -587,3 +587,116 @@ func main() {
 ## 38 WaitGroup 
 
 想要等待多个协程完成，我们可以使用 wait group。
+
+```go
+var wg sync.WaitGroup
+for i := 0; i < 5; i++ {
+	wg.Add(1) // 创建一个协程，就递增一下计数器
+	go func() {
+		defer wg.Done()
+		worker(i) // 将 worker 封装在闭包中，可以确保通知 WaitGroup 此工作线程已完成。
+	}()
+}
+wg.Wait()
+```
+
+## 39 速率限制
+
+速率限制是控制服务资源利用和质量的重要机制。基于协程、通道和打点器，Go 可以优雅的支持速率限制。
+
+```go
+burstyLimiter := make(chan time.Time, 3)
+for i := 0; i < 3; i++ {
+	burstyLimiter <- time.Now()
+}
+go func() {
+	for t := range time.Tick(200 * time.Millisecond) {
+		burstyLimiter <- t
+	}
+}()
+// 先向通道中写入 3 个时间，然后每隔 200ms 写入一个时间
+burstyRequests := make(chan int, 5)
+for i := 1; i <= 5; i++ {
+	burstyRequests <- i
+}
+close(burstyRequests)
+for req := range burstyRequests {
+	<-burstyLimiter // 接收到一个时间，就处理一个请求；开始会处理 3 个，后面就是定时加任务
+	fmt.Println("request", req, time.Now())
+}
+}
+```
+## 40 原子计数器
+
+使用 `sync/atomic` 包在多个协程中进行**原子计数**。
+
+```go
+func main() {
+    var ops uint64
+    var wg sync.WaitGroup
+    for i := 0; i < 50; i++ {
+        wg.Add(1)
+        go func() {
+            for c := 0; c < 1000; c++ {
+                atomic.AddUint64(&ops, 1)
+            }
+            wg.Done()
+        }()
+    }
+    wg.Wait()
+    fmt.Println("ops:", ops)
+}
+```
+
+使用 `AddUint64` 来让计数器自动增加，使用 `&` 语法给定 `ops` 的内存地址。
+## 41 互斥锁
+
+上一节，了解了使用原子操作来管理简单的计数器。对于更加复杂的情况，可以使用一个互斥量来在 Go 协程间安全的访问数据。
+
+```go
+type Container struct {
+    mu       sync.Mutex // 互斥锁
+    counters map[string]int
+}
+func (c *Container) inc(name string) {
+	c.mu.Lock()
+    defer c.mu.Unlock()
+    c.counters[name]++
+}
+```
+
+由于不能复制互斥锁，如果需要传递这个 `struct`，应使用指针完成。
+
+## 42 状态协程 ToDo
+
+## 43 排序
+
+Go 的 `sort` 包实现了内建及用户自定义数据类型的排序功能。排序方法是针对内置数据类型的；且是一个原地排序。
+
+```go
+sort.Strings(strs)
+sort.Ints(ints)
+s := sort.IntsAreSorted(ints) // 返回布尔值
+```
+
+## 44 使用函数自定义排序
+
+```go
+type byLength []string
+func (s byLength) Len() int {
+    return len(s)
+}
+func (s byLength) Swap(i, j int) {
+    s[i], s[j] = s[j], s[i]
+}
+func (s byLength) Less(i, j int) bool {
+    return len(s[i]) < len(s[j])
+}
+func main() {
+    fruits := []string{"peach", "banana", "kiwi"}
+    sort.Sort(byLength(fruits)) // 实现上面三个方法就行，实际上只用实现 Less 方法
+    fmt.Println(fruits)
+}
+```
+
+我们为该类型实现了 `sort.Interface` 接口的 `Len`、`Less` 和 `Swap` 方法， 这样我们就可以使用 `sort` 包的通用 `Sort` 方法了， `Len` 和 `Swap` 在各个类型中的实现都差不多， `Less` 将控制实际的自定义排序逻辑。
