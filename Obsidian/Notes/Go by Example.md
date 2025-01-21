@@ -468,4 +468,122 @@ default:
 
 ## 33 通道的关闭
 
-关闭一个通道意味着不能再向这个通道发送值了。 该特性可以向通道的接收方传达工作已经完成的信息。
+关闭一个通道意味着不能再向这个通道发送值了。该特性可以向通道的接收方传达工作已经完成的信息。
+
+```go
+func main() {
+    jobs := make(chan int, 5)
+    done := make(chan bool)
+    go func() {
+        for {
+            j, more := <-jobs // 第二个参数，表示还有没有更多的 job
+            if more {
+                fmt.Println("received job", j)
+            } else {
+                fmt.Println("received all jobs")
+                done <- true // 通知任务完成
+                return
+            }
+        }
+    }()
+    for j := 1; j <= 3; j++ {
+        jobs <- j
+        fmt.Println("sent job", j)
+    }
+    close(jobs) // 发送三个 job，然后就关闭通道
+    fmt.Println("sent all jobs")
+    <-done // 等待任务完成
+}
+```
+
+## 34 通道遍历
+
+```go
+func main() {
+    queue := make(chan string, 2)
+    queue <- "one"
+    queue <- "two"
+    close(queue)
+    for elem := range queue {
+        fmt.Println(elem)
+    }
+}
+```
+## 35 Timer 定时器
+
+定时器表示在未来某一时刻的独立事件。你告诉定时器需要等待的时间，然后它将提供一个用于通知的通道。这里的定时器将等待 2 秒。
+
+```go
+timer1 := time.NewTimer(2 * time.Second)
+<-timer1.C // 等待 2 秒
+```
+
+`<-timer1.C` 会一直阻塞，直到定时器的通道 `C` 明确的发送了定时器失效的值。如果只需要等待一段时间，使用 `time.Sleep` 就可以了。使用定时器的一个优点是，可以在定时器触发之前将其取消，例如 `timer1.Stop()`。
+
+## 36 Ticker 打点器
+
+定时器是当你想要在未来某一刻执行一次时使用的；打点器则是为你想要以固定的时间间隔重复执行而准备的。
+
+```go
+func main() {
+    ticker := time.NewTicker(500 * time.Millisecond)
+    done := make(chan bool)
+    go func() {
+        for {
+            select {
+            case <-done:
+                return
+            case t := <-ticker.C:
+                fmt.Println("Tick at", t)
+            }
+        }
+    }()
+    time.Sleep(1600 * time.Millisecond)
+    ticker.Stop()
+    done <- true
+    fmt.Println("Ticker stopped")
+}
+```
+
+使用一个通道来发送数据。这里我们使用通道内建的 `select`，等待每 500ms 到达一次的值。
+
+## 37 工作池
+
+这一小节，将使用协程和通道实现一个工作池。
+
+```go
+package main
+import (
+    "fmt"
+    "time"
+)
+func worker(id int, jobs <-chan int, results chan<- int) {
+    for j := range jobs { // 从通道中取任务，然后做任务
+        fmt.Println("worker", id, "started  job", j)
+        time.Sleep(time.Second)
+        fmt.Println("worker", id, "finished job", j)
+        results <- j * 2
+    }
+}
+func main() {
+    const numJobs = 5
+    jobs := make(chan int, numJobs)
+    results := make(chan int, numJobs)
+    // 启动了 3 个 worker，初始时是阻塞的，因为还没有传递任务
+    for w := 1; w <= 3; w++ {
+        go worker(w, jobs, results)
+    }
+    // 发送五个任务
+    for j := 1; j <= numJobs; j++ {
+        jobs <- j
+    }
+    close(jobs)
+    for a := 1; a <= numJobs; a++ {
+        <-results
+    }
+}
+```
+
+## 38 WaitGroup 
+
+想要等待多个协程完成，我们可以使用 wait group。
