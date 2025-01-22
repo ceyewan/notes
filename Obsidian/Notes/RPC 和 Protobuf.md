@@ -49,7 +49,7 @@ func main() {
 
 ```go
 func main() {
-	// 连接服务端，
+	// 连接服务端，Dial 的含义是拨号/建立连接
 	conn, err := rpc.Dial("tcp", "localhost:1234")
 	if err != nil {
 		log.Fatal("DialTCP error:", err)
@@ -66,4 +66,90 @@ func main() {
 	fmt.Println(reply)
 }
 ```
+
+运行结果如下：
+
+![image.png](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/20250122195352.png)
+
+### 1.2 安全的 RPC 接口
+
+一般的 RPC 应用，开发人员有三种角色，服务端实现 RPC 方法的开发人员；客户端调用 RPC 方法的人员；制定服务端和客户端 RPC 接口规范的**设计人员**。
+
+接下来，将会重构 HelloService 服务，将其抽象到 API 中，第一步是明确服务的名字和接口：
+
+```go
+// 服务的名字，增加了包路径前缀
+const HelloServiceName = "path/to/pkg.HelloService" 
+// 服务要实现的详细方法列表
+type HelloServiceInterface interface {
+    SayHello(request string, reply *string) error
+}
+// 注册该类型服务的函数，供服务端使用
+func RegisterHelloService(svc HelloServiceInterface) error {
+    return rpc.RegisterName(HelloServiceName, svc)
+}
+```
+
+同理，在接口规范部分，即 API 中，增加对客户端的简单包装：
+
+```go
+type HelloServiceClient struct {
+	*rpc.Client
+}
+// 编译时验证：确保 HelloServiceClient 类型实现了 HelloServiceInterface 接口
+// 零开销：匿名变量 _ 和 nil 的 HelloServiceClient 指针
+var _ HelloServiceInterface = (*HelloServiceClient)(nil)
+// DialHelloService 方法，直接拨号 HelloService 服务
+func DialHelloService(network, address string) (*HelloServiceClient, error) {
+	c, err := rpc.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &HelloServiceClient{Client: c}, nil
+}
+// 封装客户端的请求，这样客户端可以像使用本地方法一样调用 RPC 了
+func (p *HelloServiceClient) SayHello(request string, reply *string) error {
+	return p.Client.Call(HelloServiceName + ".SayHello", request, reply)
+}
+```
+
+接下来是新的服务端和客户端程序：
+
+```go
+// server.go
+func main() {
+    RegisterHelloService(new(HelloService))
+    listener, err := net.Listen("tcp", ":1234")
+    if err != nil {
+        log.Fatal("ListenTCP error:", err)
+    }
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            log.Fatal("Accept error:", err)
+        }
+        go rpc.ServeConn(conn)
+    }
+}
+// client.go
+func main() {
+    client, err := DialHelloService("tcp", "localhost:1234")
+    if err != nil {
+        log.Fatal("dialing:", err)
+    }
+    var reply string
+    err = client.SayHello("hello", &reply) // 像调用本地方法一样
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(reply)
+}
+```
+
+### 1.3 跨语言的 RPC
+
+标准库的 RPC 默认采用 Go 语言特有的 gob 编码，因此从其它语言调用 Go 语言实现的 RPC 服务将比较困难。
+
+> Gob 是 Go 语言标准库中的一种二进制编码格式，位于 encoding/gob 包中。它用于将 Go 的数据结构序列化为字节流（序列化），以及从字节流还原为 Go 的数据结构（反序列化）。
+> 由于 Gob 是 Go 特有的格式，与其他语言的互操作性有限。如果需要与其他语言通信，则必须选择跨语言的序列化工具，例如 JSON 和 Protobuf。
 
