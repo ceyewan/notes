@@ -696,6 +696,9 @@ func main() {
     fruits := []string{"peach", "banana", "kiwi"}
     sort.Sort(byLength(fruits)) // 实现上面三个方法就行，实际上只用实现 Less 方法
     fmt.Println(fruits)
+    sort.Slice(nums, func(i, j int) bool { // 只需实现比较函数
+		return nums[i] >= nums[j]
+	})
 }
 ```
 
