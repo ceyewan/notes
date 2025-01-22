@@ -153,3 +153,64 @@ func main() {
 > Gob 是 Go 语言标准库中的一种二进制编码格式，位于 encoding/gob 包中。它用于将 Go 的数据结构序列化为字节流（序列化），以及从字节流还原为 Go 的数据结构（反序列化）。
 > 由于 Gob 是 Go 特有的格式，与其他语言的互操作性有限。如果需要与其他语言通信，则必须选择跨语言的序列化工具，例如 JSON 和 Protobuf。
 
+Go 语言的 RPC 框架有两个比较有特色的设计：一个是 RPC 数据打包时可以通过插件实现自定义的编码和解码；另一个是 RPC 建立在抽象的 io.ReadWriteCloser 接口之上的，我们可以将 RPC 架设在不同的通讯协议之上。
+
+接下来基于 json 编码重新实现 RPC 服务，在服务端，只需要用 rpc.ServeCodec 函数替代 rpc.ServeConn 函数，并传入针对服务端的 json 编解码器。客户端需要手工调用 `net.Dial` 函数建立 TCP 连接，然后基于该连接建立针对客户端的 json 编解码器。
+
+```go
+// server.go
+go rpc.ServeCodec(jsonrpc.NewServerCodec(conn))
+// client.go
+conn, err := net.Dial("tcp", "localhost:1234")
+client := rpc.NewClientWithCodec(jsonrpc.NewClientCodec(conn))
+```
+
+下面，我们使用 nc 创建一个普通的 TCP 服务器代替服务端，分别查看 Json 编码和 Gob 编码传过来的内容。对于 Json 编码，其中 method 部分对应要调用的 rpc 服务和方法组合成的名字，params 部分的第一个元素为参数，id 是由调用端维护的一个唯一的调用编号。
+
+![image.png](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/20250122211328.png)
+
+同理，运行 RPC 服务端，向服务器发送 json 数据模拟 RPC 方法调用，可以获得响应数据的格式。
+
+```shell
+echo -e '{"method":"HelloService.Hello","params":["hello"],"id":1}' | nc localhost 1234
+```
+
+### 1.4 HTTP 上的 RPC
+
+Go 语言内在的 RPC 框架已经支持在 Http 协议上提供 RPC 服务。但是框架的 http 服务同样采用了内置的 gob 协议，并且没有提供采用其它协议的接口，因此从其它语言依然无法访问的。所以我们尝试自己在 http 协议上提供 jsonrpc 服务。
+
+```go
+func main() {
+    rpc.RegisterName("HelloService", new(HelloService))
+    // 在 /jsonrpc 路径上配置一个 HTTP 处理函数
+    http.HandleFunc("/jsonrpc", func(w http.ResponseWriter, r *http.Request) {
+        // io.ReadWriteCloser 是一个接口，表示既可以读取又可以写入的对象
+        // 将 HTTP 请求体（r.Body）作为读取端，将 HTTP 响应写入端（w）作为写入端
+        // 使用匿名结构体封装 ReadCloser 和 Writer，组合成一个 ReadWriteCloser
+        var conn io.ReadWriteCloser = struct {
+            io.Writer
+            io.ReadCloser
+        }{
+            ReadCloser: r.Body,
+            Writer:     w,
+        }
+        // 基于 conn 创建一个 JSON 编解码器，并处理 RPC 请求
+        rpc.ServeRequest(jsonrpc.NewServerCodec(conn))
+    })
+    http.ListenAndServe(":1234", nil)
+}
+```
+
+请求响应的结果如下：
+
+```
+curl localhost:1234/jsonrpc -X POST \  
+    --data '{"method":"HelloService.SayHello","params":["hello"],"id":0}'
+
+{"id":0,"result":"Hello World:hello","error":null}
+```
+
+## 2 Protobuf
+
+Protobuf 是 Protocol Buffers 的简称，这是一个接口规范的描述语言，可以作为设计安全的跨语言 PRC 接口的基础工具。
+
