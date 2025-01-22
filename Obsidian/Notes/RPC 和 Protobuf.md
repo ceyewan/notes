@@ -212,5 +212,34 @@ curl localhost:1234/jsonrpc -X POST \
 
 ## 2 Protobuf
 
-Protobuf 是 Protocol Buffers 的简称，这是一个接口规范的描述语言，可以作为设计安全的跨语言 PRC 接口的基础工具。
+**Protocol Buffers**（简称 Protobuf）是由 Google 开发的一种**高效**的、**跨语言**的序列化数据格式。它被广泛用于网络通信、数据存储等场景，尤其适合高性能和跨平台的需求。
+
+### 2.1 Protobuf 入门
+
+Protobuf 是一个**接口描述语言**，使用 `.proto` 文件定义数据结构和接口。通过 `.proto` 文件，Protobuf 可以生成多种语言的代码（如 Java、Python、C++ 等）以支持**跨语言通信**。
+
+Protobuf 可以执行**序列化**（将数据结构或对象转换为字节流，以便存储或传输）和**反序列化**（从字节流恢复数据结构或对象）。
+
+一般来说，Protobuf 的工作流程如下：
+1. **定义 .proto 文件**：描述数据结构和 RPC 接口。
+2. 使用 `protoc` 编译器将 `.proto` 文件生成目标语言的代码。
+3. 在项目中使用生成的代码进行序列化和反序列化操作。
+
+创建 hello.proto 文件，包装 HelloService 服务中用到的字符串类型：
+
+```proto
+syntax = "proto3"; // 采用 proto3 的语法，变量成员采用零值初始化
+
+package main; // 和 Go 的包名保持一致，简化例子代码
+
+// 最后 message 关键字定义一个新的 String 类型，在生成的 Go 代码中对应一个 String 结构体
+// String 类型中只有一个字符串类型的 value 成员，该成员编码时用 1 编号代替名字
+message String {
+	string value = 1;
+}
+```
+
+在 XML 或 JSON 等数据描述语言中，一般通过成员的名字来绑定对应的数据。但是 Protobuf 编码却是通过成员的唯一编号来绑定对应的数据，因此 Protobuf 编码后数据的体积会比较小，但是也非常不便于人类查阅。
+
+Protobuf 核心的工具集是 C++ 语言开发的，在官方的 protoc 编译器中并不支持 Go 语言。要想从上面的文件生成对应的 Go 代码，需要安装相应的插件。
 
