@@ -616,5 +616,33 @@ func main() {
 服务端使用接口，请求方法：
 
 ```go
-
+func main() {
+	// 建立到服务器的连接
+	// 使用不安全凭证（仅用于开发环境）
+	conn, err := grpc.NewClient(*addr,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("did not connect: %v", err) 
+	}
+	defer conn.Close() // 确保连接关闭
+	// 创建Greeter客户端
+	c := pb.NewGreeterClient(conn)
+	// 创建带超时的上下文（1秒）
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel() // 确保上下文取消
+	// 调用SayHello RPC方法
+	r, err := c.SayHello(ctx, &pb.HelloRequest{Name: "World"})
+	if err != nil {
+		log.Fatalf("could not greet: %v", err) 
+	}
+	// 打印服务器返回的问候消息
+	log.Printf("Greeting: %s", r.GetMessage())
+}
 ```
+
+虽然 **gRPC** 本身的接口是同步的（即每个 RPC 调用都会阻塞当前执行，直到响应返回），但它允许我们在底层利用 **HTTP/2 连接** 实现并发，特别是在 Go 语言中，可以使用 **Goroutine**（轻量级线程）来并发执行任务。尽管 gRPC 调用本身是同步的，我们可以通过在 **不同的 Goroutine** 中发起多个 gRPC 调用，从而在逻辑上实现并发处理。
+
+### 4.3 gRPC 流（Todo）
+
+### 4.4 发布和订阅模式
+
