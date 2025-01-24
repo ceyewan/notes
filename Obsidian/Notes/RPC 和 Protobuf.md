@@ -644,6 +644,12 @@ func main() {
 
 ### 4.3 gRPC 流（Todo）
 
+流（Stream）是 gRPC 中的一种通信方式，它允许客户端和服务器之间进行多次消息的发送和接收。流可以分为以下几种类型：
+
+1. **单向流（Server Streaming）**：客户端发送一个请求，服务器可以多次发送响应消息，直到所有消息发送完毕。
+2. **客户端流（Client Streaming）**：客户端可以多次发送请求消息，服务器在接收完所有请求消息后发送一个响应。
+3. **双向流（Bidirectional Streaming）**：客户端和服务器可以同时发送和接收消息，类似于双向通信的管道。
+
 ### 4.4 发布和订阅模式
 
 > **发布订阅模式**（Pub/Sub）是一种常见的消息传递设计模式，允许消息的发布者与订阅者解耦。发布者向特定主题发布消息，而订阅者则通过订阅相关的主题来接收消息。订阅者和发布者无需直接交互，系统自动将消息从发布者传递到订阅者，确保消息的高效广播。其核心优势是能够同时支持多个发布者和多个订阅者之间的多对多关系，从而增强了系统的响应能力和消息的实时性。
@@ -727,7 +733,7 @@ service PubSub {
   // 发布消息
   rpc Publish(PublishRequest) returns (PublishResponse);
   // 订阅消息
-  rpc Subscribe(SubscribeRequest) returns (stream Message);
+  rpc Subscribe(SubscribeRequest) returns (stream Message); // 使用流返回结果
 }
 // 发布请求
 message PublishRequest {
@@ -747,4 +753,91 @@ message Message {
   string content = 1;
 }
 ```
+
+服务端程序如下：
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net"
+	"sync"
+	pb "pubsub/pb"
+	"google.golang.org/grpc"
+)
+// server 结构体实现了 PubSub 服务
+type server struct {
+	pb.UnimplementedPubSubServer // 嵌入未实现的 PubSub 服务
+	mu         	sync.RWMutex
+	channels 	map[string][]chan string // 存储每个主题的订阅者通道, key 为主题，value 为订阅者通道数组
+}
+// Publish 方法实现了发布消息的功能
+func (s *server) Publish(ctx context.Context, req *pb.PublishRequest) (*pb.PublishResponse, error) {
+	s.mu.RLock()
+	subscribers, ok := s.channels[req.Topic] // 获取订阅该主题的所有通道
+	s.mu.RUnlock()
+	if ok {
+		for _, ch := range subscribers { // 遍历所有订阅者通道，将消息通过通道发送给订阅者
+			ch <- req.Message
+		}
+	}
+	return &pb.PublishResponse{Success: true}, nil
+}
+// Subscribe 方法实现了订阅主题的功能
+func (s *server) Subscribe(req *pb.SubscribeRequest, stream pb.PubSub_SubscribeServer) error {
+	ch := make(chan string, 100) // 创建一个带缓冲的通道，用于接收消息
+	s.mu.Lock()
+	s.channels[req.Topic] = append(s.channels[req.Topic], ch) // 将新通道添加到订阅者列表
+	s.mu.Unlock()
+	defer func() { // 函数退出时执行，确保通道被正确移除
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		subscribers := s.channels[req.Topic]
+		for i, c := range subscribers {
+			if c == ch {
+				s.channels[req.Topic] = append(subscribers[:i], subscribers[i+1:]...)
+				break
+			}
+		}
+	}()
+	for {
+		select {
+		case msg := <-ch:	// 从通道中接收消息
+			if err := stream.Send(&pb.Message{Content: msg}); err != nil { // 通过流发送消息
+				return err
+			}
+		case <-stream.Context().Done(): // 检查流是否已关闭
+			return nil
+		}
+	}
+}
+func main() {
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	s := grpc.NewServer()
+	pb.RegisterPubSubServer(s, &server{
+		channels: make(map[string][]chan string),
+	})
+	fmt.Println("Server is running on port 50051...")
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
+}
+```
+
+`Subscribe` 方法使用了服务器流（Server Streaming）。服务器可以在收到发布之后就给订阅者发送消息，而不需要订阅者持续调用 `Subscribe` 方法，一直从流中获取消息即可。
+
+```go
+for {
+	msg, _ := stream.Recv()
+	fmt.Printf("Received message: %s\n", msg.Content)
+}
+```
+
+![image.png](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/20250125012645.png)
 
