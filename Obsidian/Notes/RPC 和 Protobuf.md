@@ -314,6 +314,130 @@ func doClientWork(client *rpc.Client) {
 执行异步调用的 `Client.Go` 方法实现如下：
 
 ```go
-
+func (client *Client) Go(
+    serviceMethod string, args interface{},
+    reply interface{},
+    done chan *Call,
+) *Call {
+    call := new(Call)
+    call.ServiceMethod = serviceMethod // 要调用的服务和方法名
+    call.Args = args	// 调用参数
+    call.Reply = reply	// 存储响应的指针
+    call.Done = make(chan *Call, 10) // buffered.
+    client.send(call)
+    return call // 返回本次调用的 Call 对象
+}
 ```
 
+首先是构造一个表示当前调用的 call 变量，然后通过 `client.send` 将 call 的完整参数发送到 RPC 框架。`client.send` 方法调用是线程安全的，因此可以从多个 Goroutine 同时向同一个 RPC 连接发送调用指令。
+
+当调用完成或者发生错误时，将调用 `call.done` 方法通知完成：
+
+```go
+func (call *Call) done() {
+    select {
+    case call.Done <- call:
+        // ok
+    default:
+        // We don't want to block here. It is the caller's responsibility to make
+        // sure the channel has enough buffer space. See comment in Go().
+    }
+}
+```
+
+### 3.2 基于 RPC 的 Watch 功能
+
+> Watch 是一种**订阅机制**，允许客户端监听系统中某些资源的状态变化。当指定的条件（如数据更新、节点变化、配置更改等）发生时，Watch 功能会通知客户端，或直接返回满足条件的结果。
+
+我们通过 RPC 构造一个简单的内存 KV 数据库。首先定义服务如下：
+
+```go
+type KVStoreService struct {
+    m      map[string]string	// 用于存储 KV 数据
+    filter map[string]func(key string) // 每个 Watch 调用时定义的过滤器函数列表
+    mu     sync.Mutex
+}
+
+func NewKVStoreService() *KVStoreService {
+    return &KVStoreService{
+        m:      make(map[string]string),
+        filter: make(map[string]func(key string)),
+    }
+}
+```
+
+然后是 Get 和 Set 方法：
+
+```go
+func (p *KVStoreService) Get(key string, value *string) error {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    if v, ok := p.m[key]; ok {
+        *value = v
+        return nil
+    }
+    return fmt.Errorf("not found")
+}
+
+func (p *KVStoreService) Set(kv [2]string, reply *struct{}) error {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    key, value := kv[0], kv[1]
+    if oldValue := p.m[key]; oldValue != value {
+        for _, fn := range p.filter {
+            fn(key)
+        }
+    }
+    p.m[key] = value
+    return nil
+}
+```
+
+在 Set 方法中，输入参数是 key 和 value 组成的数组，用一个匿名的空结构体表示忽略了输出参数。当修改某个 key 对应的值时会调用每一个过滤器函数。
+
+而过滤器列表在 Watch 方法中提供：
+
+```go
+func (p *KVStoreService) Watch(timeoutSecond int, keyChanged *string) error {
+    id := fmt.Sprintf("watch-%s-%03d", time.Now(), rand.Int())
+    ch := make(chan string, 10) // buffered
+    p.mu.Lock()
+    p.filter[id] = func(key string) { ch <- key }
+    p.mu.Unlock()
+    select {
+    case <-time.After(time.Duration(timeoutSecond) * time.Second):
+        return fmt.Errorf("timeout")
+    case key := <-ch:
+        *keyChanged = key
+        return nil
+    }
+    return nil
+}
+```
+
+Watch 方法的输入参数是超时的秒数。当有 key 变化时将 key 作为返回值返回。如果超过时间后依然没有 key 被修改，则返回超时的错误。Watch 的实现中，用唯一的 id 表示每个 Watch 调用，然后根据 id 将自身对应的过滤器函数注册到 `p.filter` 列表。
+
+KVStoreService 服务的注册和启动过程我们不再赘述。下面我们看看如何从客户端使用 Watch 方法：
+
+```go
+func doClientWork(client *rpc.Client) {
+    go func() {
+        var keyChanged string
+        err := client.Call("KVStoreService.Watch", 30, &keyChanged)
+        if err != nil {
+            log.Fatal(err)
+        }
+        fmt.Println("watch:", keyChanged)
+    } ()
+    err := client.Call(
+        "KVStoreService.Set", [2]string{"abc", "abc-value"},
+        new(struct{}),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    time.Sleep(time.Second*3)
+}
+```
+
+首先启动一个独立的 Goroutine 监控 key 的变化。同步的 watch 调用会阻塞，直到有 key 发生变化或者超时。然后在通过 Set 方法修改 KV 值时，服务器会将变化的 key 通过 Watch 方法返回。这样我们就可以实现对某些状态的监控。
