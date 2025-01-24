@@ -239,7 +239,7 @@ option go_package="./;hello"; // ./ 表示生成文件的存放地址；hello �
 message String {
 	string value = 1;
 }
-// 通过 Protobuf 来定义 HelloService 服务
+// 用 Protobuf 定义语言无关的 RPC 服务接口才是它真正的价值所在
 service HelloService {
 	rpc Hello (String) returns (String);
 }
@@ -255,10 +255,65 @@ protoc --version
 go get github.com/golang/protobuf/protoc-gen-go # 安装 go 插件
 export PATH=$PATH:$(go env GOPATH)/bin # 添加插件路径
 protoc --go_out=. hello.proto
+protoc --go-grpc_out=. hello.proto
 ```
 
-生成的 `hello.pb.go` 文件，具有一个 String 结构体，还有 Reset()、String()、ProtoMessage() 等方法，其中 ProtoMessage 方法表示这是一个实现了 proto.Message 接口的方法。
+生成的 `hello.pb.go` 文件，具有一个 String 结构体，还有 Reset()、String()、ProtoMessage() 等方法，其中 ProtoMessage 方法表示这是一个实现了 proto.Message 接口的方法。生成的 `hello_grpc.pb.go` 文件多了一些类似 HelloServiceServer、HelloServiceClient 的新类型。这些类型是为 gRPC 服务的，并不符合我们当前的 RPC 要求。
 
+### 2.2 定制代码生成插件
 
+这后面的部分主要是实现一个 Protobuf 插件每次 hello.proto 文件中 RPC 服务的变化都可以自动生成代码；也可以通过更新插件的模板，调整或增加生成代码的内容。
 
+教程有点过时了，作用也不大，就先跳过了。
+
+## 3 玩转 RPC
+
+### 3.1 客户端 RPC 的实现原理
+
+Go 语言的 RPC 库最简单的使用方式是通过 `Client.Call` 方法进行同步阻塞调用，该方法的实现如下：
+
+```go
+func (client *Client) Call(
+    serviceMethod string, args interface{},
+    reply interface{},
+) error {
+    call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
+    return call.Error
+}
+```
+
+ `Call` 方法是一个同步的 RPC 调用，它会阻塞直到获得响应或发生错误。内部实际使用了异步的 `Go` 方法，然后等待其完成。整个过程其实类似下面这样：
+
+```go
+// 1. 调用异步的 Go 方法
+result := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
+// 2. 通过 Done channel 等待调用完成
+call := <-result.Done
+// 3. 返回调用的错误状态
+return call.Error
+```
+
+因此，也可以通过 `Client.Go` 方法直接进行异步调用返回一个表示这次调用的 `Call` 结构体。然后等待 `Call` 结构体的 Done 管道返回调用结果。
+
+在异步调用命令发出后，一般会执行其他的任务，因此异步调用的输入参数和返回值可以通过返回的 Call 变量进行获取。
+
+```go
+func doClientWork(client *rpc.Client) {
+    helloCall := client.Go("HelloService.Hello", "hello", new(string), nil)
+    // do some thing
+    helloCall = <-helloCall.Done
+    if err := helloCall.Error; err != nil {
+        log.Fatal(err)
+    }
+    args := helloCall.Args.(string)
+    reply := helloCall.Reply.(*string)
+    fmt.Println(args, *reply)
+}
+```
+
+执行异步调用的 `Client.Go` 方法实现如下：
+
+```go
+
+```
 
