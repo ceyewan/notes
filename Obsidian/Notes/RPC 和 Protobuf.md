@@ -548,3 +548,38 @@ gRPC 是 Google 公司基于 Protobuf 开发的跨语言的开源 RPC 框架。g
 
 ### 4.2 gRPC 入门
 
+接下来是官方文档的 HelloWorld 程序，首先，我们还是要编写 `.proto` 程序。
+
+```proto
+syntax = "proto3"; // 指定使用的protobuf语法版本
+option go_package = "./helloworld"; // 指定生成的Go代码的包路径
+package helloworld; // 定义protobuf的包名，用于防止命名冲突
+// 定义Greeter服务，包含所有RPC方法
+service Greeter {
+  // 定义一个简单的RPC方法SayHello
+  // 接收HelloRequest消息作为参数，返回HelloReply消息
+  // 这是一个unary RPC（一元RPC），即客户端发送一个请求，服务器返回一个响应
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+// 定义HelloRequest消息类型，用于客户端请求
+message HelloRequest {
+  // 字符串类型的name字段，字段编号为1
+  // 字段编号用于protobuf的二进制编码，1-15占用更少字节
+  // 字段编号一旦使用就不能更改
+  string name = 1;
+}
+// 定义HelloReply消息类型，用于服务端响应
+message HelloReply {
+  // 字符串类型的message字段，字段编号为1
+  // 包含服务器返回的问候消息
+  string message = 1;
+}
+```
+
+接下来使用 protobuf 生成 `hello.pb.go` 代码和 `hello_grpc.pb.go` 代码。两个代码都需要有，前者包括 message 信息，后者包括接口信息。
+
+客户端使用接口：
+
+```go
+
+```
