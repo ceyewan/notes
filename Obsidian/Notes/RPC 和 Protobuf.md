@@ -225,21 +225,40 @@ Protobuf 可以执行**序列化**（将数据结构或对象转换为字节流�
 2. 使用 `protoc` 编译器将 `.proto` 文件生成目标语言的代码。
 3. 在项目中使用生成的代码进行序列化和反序列化操作。
 
-创建 hello.proto 文件，包装 HelloService 服务中用到的字符串类型：
+创建 `hello.proto` 文件，包装 HelloService 服务中用到的字符串类型：
 
 ```proto
 syntax = "proto3"; // 采用 proto3 的语法，变量成员采用零值初始化
 
 package main; // 和 Go 的包名保持一致，简化例子代码
 
+option go_package="./;hello"; // ./ 表示生成文件的存放地址；hello 表示生成文件包名
+
 // 最后 message 关键字定义一个新的 String 类型，在生成的 Go 代码中对应一个 String 结构体
 // String 类型中只有一个字符串类型的 value 成员，该成员编码时用 1 编号代替名字
 message String {
 	string value = 1;
+}
+// 通过 Protobuf 来定义 HelloService 服务
+service HelloService {
+	rpc Hello (String) returns (String);
 }
 ```
 
 在 XML 或 JSON 等数据描述语言中，一般通过成员的名字来绑定对应的数据。但是 Protobuf 编码却是通过成员的唯一编号来绑定对应的数据，因此 Protobuf 编码后数据的体积会比较小，但是也非常不便于人类查阅。
 
 Protobuf 核心的工具集是 C++ 语言开发的，在官方的 protoc 编译器中并不支持 Go 语言。要想从上面的文件生成对应的 Go 代码，需要安装相应的插件。
+
+```shell
+brew install protobuf # 安装 protobuf
+protoc --version
+go get github.com/golang/protobuf/protoc-gen-go # 安装 go 插件
+export PATH=$PATH:$(go env GOPATH)/bin # 添加插件路径
+protoc --go_out=. hello.proto
+```
+
+生成的 `hello.pb.go` 文件，具有一个 String 结构体，还有 Reset()、String()、ProtoMessage() 等方法，其中 ProtoMessage 方法表示这是一个实现了 proto.Message 接口的方法。
+
+
+
 
