@@ -578,7 +578,42 @@ message HelloReply {
 
 接下来使用 protobuf 生成 `hello.pb.go` 代码和 `hello_grpc.pb.go` 代码。两个代码都需要有，前者包括 message 信息，后者包括接口信息。
 
-客户端使用接口：
+服务端使用接口，创建可被调用的方法：
+
+```go
+// server结构体实现helloworld.GreeterServer接口
+type server struct {
+	// 内嵌UnimplementedGreeterServer以保证向前兼容
+	// 这个东西也实现了 SayHello，就算用户忘记了也不报错
+	pb.UnimplementedGreeterServer 
+}
+// SayHello实现helloworld.GreeterServer接口
+// 这是一个简单的unary RPC方法示例
+func (s *server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+	log.Printf("Received: %v", in.GetName())
+	// 返回响应消息，包含问候语
+	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
+}
+func main() {
+	// 创建TCP监听器
+	lis, err := net.Listen("tcp", 50051)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err) 
+	}
+	// 创建新的gRPC服务器实例
+	s := grpc.NewServer()
+	// 注册Greeter服务实现
+	pb.RegisterGreeterServer(s, &server{})
+	// 记录服务器启动信息
+	log.Printf("server listening at %v", lis.Addr())
+	// 启动服务器，开始处理请求
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
+}
+```
+
+服务端使用接口，请求方法：
 
 ```go
 
