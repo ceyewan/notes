@@ -417,7 +417,7 @@ func (p *KVStoreService) Watch(timeoutSecond int, keyChanged *string) error {
 
 Watch 方法的输入参数是超时的秒数。当有 key 变化时将 key 作为返回值返回。如果超过时间后依然没有 key 被修改，则返回超时的错误。Watch 的实现中，用唯一的 id 表示每个 Watch 调用，然后根据 id 将自身对应的过滤器函数注册到 `p.filter` 列表。
 
-KVStoreService 服务的注册和启动过程我们不再赘述。下面我们看看如何从客户端使用 Watch 方法：
+下面我们看看如何从客户端使用 Watch 方法：
 
 ```go
 func doClientWork(client *rpc.Client) {
@@ -429,6 +429,7 @@ func doClientWork(client *rpc.Client) {
         }
         fmt.Println("watch:", keyChanged)
     } ()
+    time.Sleep(time.Second) // 先启动 goroutine 创建过滤器
     err := client.Call(
         "KVStoreService.Set", [2]string{"abc", "abc-value"},
         new(struct{}),
@@ -441,3 +442,109 @@ func doClientWork(client *rpc.Client) {
 ```
 
 首先启动一个独立的 Goroutine 监控 key 的变化。同步的 watch 调用会阻塞，直到有 key 发生变化或者超时。然后在通过 Set 方法修改 KV 值时，服务器会将变化的 key 通过 Watch 方法返回。这样我们就可以实现对某些状态的监控。
+
+### 3.3 反向 RPC
+
+> **反向连接**是指网络中的一方（通常是内网设备或无法直接暴露在公网的服务端）主动发起与外网另一方的连接，建立一个稳定的通信通道后，让外网的另一方能够通过该通道访问内网资源。它常用于解决 NAT（网络地址转换）或防火墙限制导致的连接障碍。典型场景是：内网服务端主动连接外网客户端，建立的连接既能让内网端提供服务，也能让外网端访问资源，类似反向代理的一种机制，用于内网穿透或提升访问灵活性。
+> **反向代理**技术是一种网络服务配置模式，其中代理服务器位于客户端和目标服务器之间，客户端通过代理服务器访问目标服务器。与普通的“正向代理”（客户端通过代理访问外部资源）不同，反向代理的代理服务器对外表现为目标服务器，隐藏了真实的目标服务器地址和内部架构。
+
+通常的 RPC 是基于 C/S 结构，RPC 的服务端对应网络的服务器，RPC 的客户端也对应网络客户端。但是对于一些特殊场景，比如在公司内网提供一个 RPC 服务，但是在外网无法连接到内网的服务器。这种时候我们可以参考类似反向代理的技术，首先从内网主动连接到外网的 TCP 服务器，然后基于 TCP 连接向外网提供 RPC 服务。
+
+客户端（具有公网 IP 地址）：
+
+```go
+func main() {
+    listener, err := net.Listen("tcp", ":1234")
+    if err != nil {
+        log.Fatal("ListenTCP error:", err)
+    }
+    clientChan := make(chan *rpc.Client)
+    go func() {
+        for {
+            conn, err := listener.Accept()
+            if err != nil {
+                log.Fatal("Accept error:", err)
+            }
+            clientChan <- rpc.NewClient(conn)
+        }
+    }()
+    client := <-clientChan
+    defer client.Close()
+    var reply string
+    err := client.Call("HelloService.Hello", "hello", &reply)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(reply)
+}
+```
+
+1. **监听端口**：客户端（外网）首先在 1234 端口上启动一个 TCP 监听。这意味着它会等待其他主机连接到这个端口。
+2. **协程处理连接**：客户端使用一个 goroutine 来接受连接请求。每当一个新的连接建立时，它会创建一个 rpc.Client 实例并通过 clientChan 发送给主线程。
+3. **发起 RPC 请求**：客户端从 clientChan 中获取到一个 rpc.Client，然后通过它调用服务端暴露的 RPC 方法（HelloService.Hello）。这个调用发送到服务端，并等待响应。
+
+服务端（没有公网地址）：
+
+```go
+func main() {
+	rpc.Register(new(HelloService))
+	for {
+		conn, _ := net.Dial("tcp", "localhost:1234")
+		if conn == nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		rpc.ServeConn(conn)
+		conn.Close()
+	}
+}
+```
+
+1. **注册 RPC 服务**：服务端首先注册了一个 HelloService 类型的服务，使得它可以响应客户端请求。
+2. **主动连接外网客户端**：服务端在内网中，通过 net.Dial("tcp", "localhost:1234") 主动连接到客户端监听的 1234 端口。这个连接类似于传统的客户端发起连接，但这里是内网服务端主动连接外网客户端的端口。
+3. **处理请求**：一旦建立连接，服务端通过 rpc.ServeConn(conn) 来处理 RPC 请求。当一个 RPC 请求到达时，服务端就能解析并响应它。服务端的连接会在处理完请求后关闭。
+
+由于 RPC 构建在 **TCP** 之上，能够在连接建立后进行**全双工通信**，服务端和客户端的角色可以动态切换。
+
+### 3.4 上下文信息
+
+基于上下文我们可以针对不同客户端提供定制化的 RPC 服务。通过为每个连接提供独立的 RPC 服务来实现对上下文特性的支持。基于上下文信息，可以方便地为 RPC 服务增加简单的登陆状态的验证。类似于 Context 差不多。
+
+```go
+type HelloService struct {
+    conn    net.Conn
+    isLogin bool
+}
+
+func (p *HelloService) Login(request string, reply *string) error {
+    if request != "user:password" {
+        return fmt.Errorf("auth failed")
+    }
+    log.Println("login ok")
+    p.isLogin = true
+    return nil
+}
+
+func (p *HelloService) Hello(request string, reply *string) error {
+    if !p.isLogin {
+        return fmt.Errorf("please login")
+    }
+    *reply = "hello:" + request + ", from" + p.conn.RemoteAddr().String()
+    return nil
+}
+```
+
+## 4 gRPC 入门
+
+gRPC 是 Google 公司基于 Protobuf 开发的跨语言的开源 RPC 框架。gRPC 基于 HTTP/2 协议设计，可以基于一个 HTTP/2 连接提供多个服务。
+
+> HTTP/2 是 HTTP 协议的升级版本，主要特点包括：采用二进制分帧，提升解析效率；支持**多路复用**，在单个 TCP 连接中并行处理多个请求和响应，避免队头阻塞；使用 HPACK 算法对头部压缩，减少传输数据量；支持**服务器推送**，可主动向客户端发送资源；并具备请求优先级和流量控制功能，优化资源分配。这些特性显著降低了网络延迟，提高了性能和效率，特别适合高并发和实时通信场景。
+
+### 4.1 gRPC 技术栈
+
+![image.png](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/20250124164401.png)
+
+最底层为 TCP 或 Unix Socket 协议，在此之上是 HTTP/2 协议的实现，然后在 HTTP/2 协议之上又构建了针对 Go 语言的 gRPC 核心库。应用程序通过 gRPC 插件生产的 Stub 代码和 gRPC 核心库通信，也可以直接和 gRPC 核心库通信。
+
+### 4.2 gRPC 入门
+
