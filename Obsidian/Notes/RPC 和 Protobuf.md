@@ -646,4 +646,105 @@ func main() {
 
 ### 4.4 发布和订阅模式
 
-> 发布订阅设计模式：
+> **发布订阅模式**（Pub/Sub）是一种常见的消息传递设计模式，允许消息的发布者与订阅者解耦。发布者向特定主题发布消息，而订阅者则通过订阅相关的主题来接收消息。订阅者和发布者无需直接交互，系统自动将消息从发布者传递到订阅者，确保消息的高效广播。其核心优势是能够同时支持多个发布者和多个订阅者之间的多对多关系，从而增强了系统的响应能力和消息的实时性。
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+	"github.com/redis/go-redis/v9"
+)
+
+type PubSub struct {
+	client *redis.Client
+}
+// 创建新的 PubSub 实例
+func NewPubSub() *PubSub {
+	client := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379", // Redis 服务器地址
+		Password: "",               // 无密码
+		DB:       0,                // 默认 DB
+	})
+	return &PubSub{
+		client: client,
+	}
+}
+// 发布消息
+func (ps *PubSub) Publish(ctx context.Context, channel string, message interface{}) error {
+	err := ps.client.Publish(ctx, channel, message).Err()
+	if err != nil {
+		return fmt.Errorf("发布消息失败: %v", err)
+	}
+	return nil
+}
+// 订阅频道
+func (ps *PubSub) Subscribe(ctx context.Context, channel string) {
+	pubsub := ps.client.Subscribe(ctx, channel)
+	defer pubsub.Close()
+	// 接收消息
+	ch := pubsub.Channel()
+	for msg := range ch {
+		fmt.Printf("收到来自频道 %s 的消息: %s\n", msg.Channel, msg.Payload)
+	}
+}
+func main() {
+	ctx := context.Background()
+	ps := NewPubSub()
+	// 启动订阅者
+	go func() {
+		ps.Subscribe(ctx, "news")
+	}()
+	// 等待订阅者准备就绪
+	time.Sleep(time.Second)
+	// 发布一些消息
+	for i := 1; i <= 5; i++ {
+		message := fmt.Sprintf("这是第 %d 条新闻", i)
+		err := ps.Publish(ctx, "news", message)
+		if err != nil {
+			log.Printf("发布消息失败: %v", err)
+		}
+		time.Sleep(time.Second)
+	}
+	// 等待消息处理完成
+	time.Sleep(time.Second * 2)
+}
+```
+
+`Publish` 方法用于向指定的频道发布消息。它调用 `redis.Client` 的 `Publish` 方法；`Subscribe` 方法用于订阅指定的频道。它调用 `redis.Client` 的 `Subscribe` 方法订阅频道，并通过 `pubsub.Channel()` 方法获取一个消息通道 ch。然后，它在一个循环中接收来自该通道的消息，并打印消息的频道和内容。
+
+我们可以尝试基于 gRPC 和 pubsub 包，提供一个跨网络的发布和订阅系统。首先通过 Protobuf 定义一个发布订阅服务接口：
+
+```proto
+syntax = "proto3";
+package pubsub;
+option go_package = "./pb";
+// PubSub服务定义
+service PubSub {
+  // 发布消息
+  rpc Publish(PublishRequest) returns (PublishResponse);
+  // 订阅消息
+  rpc Subscribe(SubscribeRequest) returns (stream Message);
+}
+// 发布请求
+message PublishRequest {
+  string topic = 1;
+  string message = 2;
+}
+// 发布响应
+message PublishResponse {
+  bool success = 1;
+}
+// 订阅请求
+message SubscribeRequest {
+  string topic = 1;
+}
+// 消息
+message Message {
+  string content = 1;
+}
+```
+
