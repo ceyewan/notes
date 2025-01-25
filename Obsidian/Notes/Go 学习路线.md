@@ -20,3 +20,8 @@ rpc、gin、jwt、cobra、otel、go-kit、gorm、logrus、validator
 
 1. [LeetCode-Go](https://books.halfrost.com/leetcode/)
 2. [LeetCode-101](https://github.com/changgyhub/leetcode_101)
+
+## 4 分布式
+
+1. [分布式学习路线](https://www.qtmuniao.com/2021/05/16/distributed-system-material/)
+2. 
