@@ -13,7 +13,9 @@
 3. MIT6824
 4. [Godis](https://github.com/HDT3213/godis)
 5. [区块链](https://github.com/Jeiwan/blockchain_go)
+6. [区块链 ProjectX](https://github.com/anthdm/projectx)
 
+rpc、gin、jwt、cobra、otel、go-kit、gorm、logrus、validator
 ## 3 LeetCode
 
 1. [LeetCode-Go](https://books.halfrost.com/leetcode/)

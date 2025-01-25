@@ -70,8 +70,8 @@
 - **同步问题**：多个独立的副本需要保持一致性，确保数据在不同机器上同步。
 - **一致性模型的选择**：一致性模型决定了如何保证数据的同步与一致性，并影响系统的可用性与延迟。
 
-复制也是许多问题的来源，因为现在有数据的独立副本必须在多台机器上保持同步 - 这意味着确保复制遵循一致性模型。
+>**强一致性**指的是在分布式系统中，所有节点的状态在任何时刻都是一致的。当一个写操作完成后，所有后续的读操作都能看到这个更新，且不会返回过时的数据。它通常通过锁或同步机制来确保，保证了数据的一致性，但代价是可能会引入较高的延迟。强一致性确保了数据的准确性，但在网络故障或高延迟环境下可能会影响系统的可用性。
+  **弱一致性**则表示系统在某些时间点可能存在不同步的状态，允许节点之间的数据在短时间内处于不一致的状态。即便某个节点的更新没有被立即同步到其他节点，系统仍然认为是正常的，最终一致性通常在这种情况下得到保证。弱一致性强调高可用性和性能，通常适用于对一致性要求不高、容忍暂时数据不一致的场景，如社交媒体应用、缓存系统等。
 
-一致性模型的选择至关重要：良好的一致性模型为程序员提供了干净的语义（换句话说，其保证的属性易于推理），并符合业务/设计目标，例如高可用性或强大的一致性。
+## 3 Time and order
 
-Only one consistency model for replication - strong consistency - allows you to program as-if the underlying data was not replicated. Other consistency models expose some internals of the replication to the programmer. However, weaker consistency models can provide lower latency and higher availability - and are not necessarily harder to understand, just different.
