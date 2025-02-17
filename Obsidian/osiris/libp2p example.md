@@ -185,3 +185,173 @@ func doEcho(s network.Stream) error {
 ```
 
 ## 3 pubsub（mDNS）
+
+```go
+package main
+
+import (
+    "context"
+    "flag"
+    "fmt"
+    "os"
+    "time"
+    "github.com/libp2p/go-libp2p"
+    pubsub "github.com/libp2p/go-libp2p-pubsub"
+    "github.com/libp2p/go-libp2p/core/host"
+    "github.com/libp2p/go-libp2p/core/peer"
+    "github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+)
+
+// mDNS 发现间隔时间
+const DiscoveryInterval = time.Hour
+
+// mDNS 服务标签
+const DiscoveryServiceTag = "pubsub-chat-example"
+
+func main() {
+    // 解析命令行参数
+    nickFlag := flag.String("nick", "", "聊天昵称，如果为空将自动生成")
+    roomFlag := flag.String("room", "awesome-chat-room", "加入的聊天室名称")
+    flag.Parse()
+    ctx := context.Background()
+    // 创建一个新的libp2p主机，监听随机TCP端口
+    h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"))
+    // 创建一个新的PubSub服务，使用GossipSub路由
+    ps, err := pubsub.NewGossipSub(ctx, h)
+    // 设置本地mDNS发现
+    if err := setupDiscovery(h); err != nil {
+        panic(err)
+    }
+    nick := *nickFlag
+    room := *roomFlag
+    // 加入聊天室
+    cr, err := JoinChatRoom(ctx, ps, h.ID(), nick, room)
+    if err != nil {
+        panic(err)
+    }
+    // 启动聊天UI
+    ui := NewChatUI(cr)
+    if err = ui.Run(); err != nil {
+        printErr("运行聊天UI时出错: %s", err)
+    }
+}
+
+// 发现通知结构体，用于处理通过 mDNS 发现的新节点
+type discoveryNotifee struct {
+    h host.Host
+}
+
+// 处理发现的peer，连接到它们。当通过 mDNS 发现新节点时，会调用这个方法
+func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
+    fmt.Printf("发现新peer %s\n", pi.ID)
+    err := n.h.Connect(context.Background(), pi)
+    if err != nil {
+        fmt.Printf("连接peer %s时出错: %s\n", pi.ID, err)
+    }
+}
+
+// 设置mDNS发现服务
+func setupDiscovery(h host.Host) error {
+	// 创建一个新的 mDNS 服务
+    s := mdns.NewMdnsService(h, DiscoveryServiceTag, &discoveryNotifee{h: h})
+    return s.Start()
+}
+```
+
+下面是 ChatRoom 的实现：
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "github.com/libp2p/go-libp2p/core/peer"
+    pubsub "github.com/libp2p/go-libp2p-pubsub"
+)
+
+// ChatRoomBufSize 是每个主题的消息缓冲区大小
+const ChatRoomBufSize = 128
+
+// ChatRoom 表示对单个 PubSub 主题的订阅
+type ChatRoom struct {
+    Messages chan *ChatMessage // 接收其他节点消息的通道
+    ctx      context.Context
+    ps       *pubsub.PubSub
+    topic    *pubsub.Topic
+    sub      *pubsub.Subscription
+    roomName string
+    self     peer.ID
+    nick     string
+}
+
+// ChatMessage 表示聊天消息，会被转换为 JSON 并发送
+type ChatMessage struct {
+    Message    string
+    SenderID   string
+    SenderNick string
+}
+
+// JoinChatRoom 尝试订阅房间名对应的 PubSub 主题，成功时返回 ChatRoom
+func JoinChatRoom(ctx context.Context, ps *pubsub.PubSub, selfID peer.ID, nickname string, roomName string) (*ChatRoom, error) {
+    // 加入 pubsub 主题
+    topic, err := ps.Join(topicName(roomName))
+    // 订阅主题
+    sub, err := topic.Subscribe()
+    cr := &ChatRoom{
+        ctx:      ctx,
+        ps:       ps,
+        topic:    topic,
+        sub:      sub,
+        self:     selfID,
+        nick:     nickname,
+        roomName: roomName,
+        Messages: make(chan *ChatMessage, ChatRoomBufSize),
+    }
+    // 启动读取消息的循环
+    go cr.readLoop()
+    return cr, nil
+}
+
+// Publish 发送消息到 pubsub 主题
+func (cr *ChatRoom) Publish(message string) error {
+    m := ChatMessage{
+        Message:    message,
+        SenderID:   cr.self.String(),
+        SenderNick: cr.nick,
+    }
+    msgBytes, err := json.Marshal(m)
+    if err != nil {
+        return err
+    }
+    return cr.topic.Publish(cr.ctx, msgBytes)
+}
+
+// readLoop 从 pubsub 主题中读取消息并推送到 Messages 通道
+func (cr *ChatRoom) readLoop() {
+    for {
+        msg, err := cr.sub.Next(cr.ctx)
+        if err != nil {
+            close(cr.Messages)
+            return
+        }
+        // 只转发其他节点发送的消息
+        if msg.ReceivedFrom == cr.self {
+            continue
+        }
+        cm := new(ChatMessage)
+        err = json.Unmarshal(msg.Data, cm)
+        if err != nil {
+            continue
+        }
+        // 发送有效消息到 Messages 通道
+        cr.Messages <- cm
+    }
+}
+
+// topicName 返回房间名对应的主题名
+func topicName(roomName string) string {
+    return "chat-room:" + roomName
+}
+```
+
