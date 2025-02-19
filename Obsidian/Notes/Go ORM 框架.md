@@ -77,55 +77,41 @@ SQLite 是一款轻量级的，遵守 ACID 事务原则的关系型数据库。S
 
 Go 语言提供了标准库 `database/sql` 用于和数据库的交互。
 
-```
-package main
-
-  
-
-import (
-
-"database/sql"
-
-"log"
-
-  
-
-_ "github.com/mattn/go-sqlite3"
-
-)
-
-  
-
+```go
 func main() {
-
-db, _ := sql.Open("sqlite3", "gee.db")
-
-defer func() { _ = db.Close() }()
-
-_, _ = db.Exec("DROP TABLE IF EXISTS User;")
-
-_, _ = db.Exec("CREATE TABLE User(Name text);")
-
-result, err := db.Exec("INSERT INTO User(`Name`) values (?), (?)", "Tom", "Sam")
-
-if err == nil {
-
-affected, _ := result.RowsAffected()
-
-log.Println(affected)
-
-}
-
-row := db.QueryRow("SELECT Name FROM User LIMIT 1")
-
-var name string
-
-if err := row.Scan(&name); err == nil {
-
-log.Println(name)
-
-}
-
+    db, _ := sql.Open("sqlite3", "gee.db")
+    defer func() { _ = db.Close() }()
+    _, _ = db.Exec("DROP TABLE IF EXISTS User;")
+    _, _ = db.Exec("CREATE TABLE User(Name text);")
+    result, err := db.Exec("INSERT INTO User(`Name`) values (?), (?)", "Tom", "Sam")
+    if err == nil {
+        affected, _ := result.RowsAffected()
+        log.Println(affected)
+    }
+    row := db.QueryRow("SELECT Name FROM User LIMIT 1")
+    var name string
+    if err := row.Scan(&name); err == nil {
+        log.Println(name)
+    }
 }
 ```
 
+使用 `sql.Open()` 连接数据库，第一个参数是驱动名称，第二个参数是数据库的名称，对于 SQLite 来说，也就是文件名，不存在会新建。返回一个 `sql.DB` 实例的指针。
+
+`Exec()` 用于执行 SQL 语句，如果是查询语句，不会返回相关的记录。所以查询语句通常使用 `Query()` 和 `QueryRow()`，前者可以返回多条记录，后者只返回一条记录。
+
+`Exec()`、`Query()`、`QueryRow()` 接受1或多个入参，第一个入参是 SQL 语句，后面的入参是 SQL 语句中的占位符 `?` 对应的值，占位符一般用来防 SQL 注入。
+
+`QueryRow()` 的返回值类型是 `*sql.Row`，`row.Scan()` 接受1或多个指针作为参数，可以获取对应列(column)的值，在这个示例中，只有 `Name` 一列，因此传入字符串指针 `&name` 即可获取到查询的结果。
+
+### 1.3 实现一个简单的 log 库
+
+这个地方我们实现一个简易的 log 库，支持日志分级、不同分级的日志使用不同颜色区分、显示打印日志代码对应的文件名和行号。
+
+### 1.4 核心部分 Session
+
+这个部分用于实现与数据库的交互，现在我们只实现直接调用 SQL 语句进行交互。
+
+### 1.5 核心结构 Engine
+
+Session 负责与数据库的交互，那交互前的准备工作（比如连接/测试数据库），交互后的收尾工作（关闭连接）等就交给 Engine 来负责了。Engine 是 GeeORM 与用户交互的入口。
