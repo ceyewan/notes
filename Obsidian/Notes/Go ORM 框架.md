@@ -121,4 +121,14 @@ tx *sql.Tx // tx 提供事务支持，如果 tx 不为 nil，则执行所有操�
 }
 ```
 
+首先，Session 封装了 Exec、QueryRow、QueryRows 这三个方法，分别调用标准库里的这三个函数，使用 Seesion.sql 作为 SQL 语句，Seesion.sqlVars 作为 SQL 语句中的参数。
+
+> [!NOTE]
+> Exec 方法用于执行不需要返回行的 SQL 语句，例如 INSERT、DELETE、UPDATE 等；返回值 result 是 sql.Result 类型，用于返回执行结果（受影响的行数等）。
+> QueryRow 方法用于执行需要返回单行结果的 SQL 查询，例如 SELECT 查询，返回一个 \*sql.Row 对象，表示查询结果的单行记录。
+
+### 2.1 事务的实现
+
+
+
 ## 3 
