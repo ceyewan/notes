@@ -104,14 +104,21 @@ func main() {
 
 `QueryRow()` 的返回值类型是 `*sql.Row`，`row.Scan()` 接受1或多个指针作为参数，可以获取对应列(column)的值，在这个示例中，只有 `Name` 一列，因此传入字符串指针 `&name` 即可获取到查询的结果。
 
-### 1.3 实现一个简单的 log 库
+## 2 Session
 
-这个地方我们实现一个简易的 log 库，支持日志分级、不同分级的日志使用不同颜色区分、显示打印日志代码对应的文件名和行号。
+Session 主要复制与数据库会话和 CRUD 操作。
 
-### 1.4 核心部分 Session
+```go
+// Session 是会话管理的主要结构，包含会话的所有操作
+type Session struct {
+db *sql.DB // 数据库连接
+sql strings.Builder // sql 用于拼接 SQL 语句
+sqlVars []interface{} // sqlVars 用于存储 SQL 语句中的参数
+dialect dialect.Dialect // dialect 记录了该 Session 所使用的数据库方言
+refTable *schema.Schema // refTable 记录 Model 对应的表结构
+clause clause.Clause // clause 是记录 SQL 语句中的各种子句
+tx *sql.Tx // tx 提供事务支持，如果 tx 不为 nil，则执行所有操作都在事务中
+}
+```
 
-这个部分用于实现与数据库的交互，现在我们只实现直接调用 SQL 语句进行交互。
-
-### 1.5 核心结构 Engine
-
-Session 负责与数据库的交互，那交互前的准备工作（比如连接/测试数据库），交互后的收尾工作（关闭连接）等就交给 Engine 来负责了。Engine 是 GeeORM 与用户交互的入口。
+## 3 
