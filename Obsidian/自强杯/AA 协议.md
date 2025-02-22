@@ -105,3 +105,104 @@ AA 协议是电子护照安全机制的重要组成部分，通过挑战-响应�
 -   [Biometric passport - Wikipedia](https://en.wikipedia.org/wiki/Biometric_passport)
 -   [Cloning detection for ePassports](https://www.inverid.com/blog/cloning-detection-epassports)
 -   [Using ePassport with Active/Chip Authentication to sign documents - Cryptography Stack Exchange](https://crypto.stackexchange.com/questions/75058/using-epassport-with-active-chip-authentication-to-sign-documents)
+
+## 3 PA（Passive Authentication）
+
+**PA** 是电子护照的数据完整性验证机制，用于确认芯片内存储的数据是否被篡改。通过验证安全对象目录（EF.SOD）中的数字签名和数据组哈希值，确保数据的真实性和完整性。
+
+### 3.1 参数声明
+
+- **EF.SOD**：安全对象目录文件，包含数据组的哈希值和数字签名。
+- **哈希算法**：用于计算数据组哈希值的算法（如 SHA-256）。
+- **DG 文件**：数据组文件（如 DG1、DG2）存储实际的护照数据。
+
+### 3.2 协议流程
+
+1. **读取 EF.SOD 文件**：
+    - 使用会话密钥读取 EF.SOD 文件，获取各个数据组的哈希值和数字签名。
+2. **计算数据组哈希值**：
+    - 对读取到的 DG 文件重新计算哈希值。
+3. **比对哈希值**：
+    - 将计算得到的哈希值与 EF.SOD 中存储的哈希值进行比较，验证数据是否被篡改。
+4. **验证数字签名**：
+    - 使用国家签发的公钥证书验证 EF.SOD 中的数字签名，确认签名的有效性。
+
+### 3.3 实现细节
+
+#### 3.3.1 读取 EF.SOD 文件
+
+```python
+def select_SOD(connection, BAC_data):     
+    # 使用会话密钥加密命令，读取 EF.SOD 文件     
+    # 解密响应数据，获取 EF_SOD
+```
+
+#### 3.3.2 被动认证过程
+
+```python
+def PassiveAuth(EF_SOD):
+    # 解析 EF_SOD，提取哈希值和数字签名
+    # 对比计算的哈希值和存储的哈希值
+    # 使用公钥验证数字签名
+```
+
+#### 3.3.3 验证结果
+
+```python
+flag = PassiveAuth(EF_SOD)
+if flag == True:
+    print("PA 认证通过！")
+else:
+    print("PA 认证失败！")
+```
+
+## 4 AA（Active Authentication，主动认证）
+
+**AA** 是电子护照的防克隆机制，用于验证芯片的唯一性。通过挑战-响应协议，读取器验证芯片是否持有正确的私钥，防止芯片被复制。
+
+### 4.1 参数声明
+
+- **RND<sub>IFD</sub>**：读取器生成的挑战随机数。
+- **签名数据 S**：芯片对 RND<sub>IFD</sub> 的签名。
+- **EF.DG15**：存储芯片的公钥，供验证签名使用。
+
+### 4.2 协议流程
+
+1. **生成挑战随机数**：
+    - 读取器生成 8 字节的随机数 RND<sub>IFD</sub>。
+2. **发送 INTERNAL AUTHENTICATE 命令**：
+    - 将 RND<sub>IFD</sub> 发送给芯片，请求签名。
+3. **芯片返回签名数据**：
+    - 芯片使用私钥对 RND<sub>IFD</sub> 进行签名，返回签名数据 S。
+4. **读取 EF.DG15 公钥**：
+    - 读取 EF.DG15，获取芯片的公钥。
+5. **验证签名**：
+    - 使用公钥验证签名数据 S，确认芯片持有正确的私钥。
+
+### 4.3 实现细节
+
+生成挑战随机数并发送认证请求
+
+```python
+def internal_authenticate(connection, RND_IFD):
+    # 发送 INTERNAL AUTHENTICATE 命令，传入 RND_IFD
+    # 返回芯片的签名数据
+```
+
+读取 EF.DG15 获取公钥
+
+```python
+EF_DG15, BAC_data = select_DG15(connection, BAC_data)
+Kpu = EF_DG15.hex().upper()
+```
+
+验证签名
+
+```python
+def Verify_AA_RSA_M(KPu, S):
+    # 使用芯片的公钥 KPu，验证签名数据 S
+    # 解密签名，验证包含的随机数是否与 RND_IFD 匹配
+```
+
+认证结果
+
