@@ -169,3 +169,96 @@ APDU通信的优点是标准化程度高，适用于与不同厂商的安全芯�
 PC验证终端的整体系统架构设计采用了前后端分离的模式，前端基于Vue.js框架开发，负责用户界面的展示与交互，后端基于Go语言开发，负责与安全芯片的通信以及数据处理。通信模块包括前端与后端之间的WebSocket通信，以及后端与安全芯片之间的APDU通信。通过设计完善的系统架构和通信协议，可以确保系统的高可靠性、跨平台兼容性以及用户友好的交互体验。
 
 ## 3 第二部分：系统实现
+
+### 3.1 技术栈与框架选择
+
+PC 验证终端的实现基于一套现代化的技术栈，旨在确保系统的高效性、跨平台兼容性以及用户友好的交互体验。以下是技术栈的选择与框架的详细说明：
+
+**Electron 框架与 Vue.js 前端**
+
+Electron 是一个基于 Chromium 和 Node.js 的开源框架，允许开发者使用 Web 技术（HTML、CSS、JavaScript）构建跨平台桌面应用程序。在 PC 验证终端中，Electron 提供了主进程和渲染进程的分离架构，主进程负责管理应用程序的生命周期和系统级任务，渲染进程则负责用户界面的渲染。
+
+前端采用 Vue.js 框架，Vue.js 是一个渐进式 JavaScript 框架，专注于构建用户界面。其组件化开发模式和响应式数据绑定机制使得前端开发更加高效和灵活。Vue.js 与 Electron 的结合使得验证终端能够提供现代化、用户友好的界面，同时支持跨平台运行。
+
+**Go 语言与 PC/SC 标准库**
+
+后端采用 Go 语言开发，Go 以其高效的并发处理能力和简洁的语法著称，适合开发高性能的后端服务。Go 语言通过 PC/SC 标准库与安全芯片进行 APDU 通信，PC/SC（Personal Computer/Smart Card）是一个国际标准，定义了智能卡与读卡器之间的通信协议。
+
+**WebSocket 用于前后端通信**
+
+前后端之间的通信通过 WebSocket 协议实现。WebSocket 是一种在单个 TCP 连接上进行全双工通信的协议，适用于实时数据传输。在 PC 验证终端中，前端通过 WebSocket 向后端发送请求，后端处理请求后，将结果通过 WebSocket 返回给前端。这种通信方式使得前端能够实时获取从安全芯片传递来的数据，并更新用户界面。
+
+### 3.2 前端界面实现
+
+前端界面基于 Vue.js 开发，以下是主要页面的实现。
+
+**首页**
+
+首页显示系统 logo 系统名和对用户的提示消息，提醒用户在护照阅读机上放置护照或电子护照即可开始进行读取。
+
+**加载页**
+
+加载页显示认证进度条和状态信息，通过 WebSocket 接收到的进度实时更新进度。
+
+**结果页**
+
+结果页显示认证结果或错误警告，用户点击返回首页按钮或者等待一段时间后后跳转到首页。
+
+### 3.3 安全芯片与 Go 语言的 APDU 通信实现
+
+Go 程序通过 PC/SC 标准库与安全芯片进行 APDU 通信，以下是实现步骤：
+
+1. **初始化 PC/SC 连接**
+    Go 程序通过 PC/SC 标准库初始化与读卡器的连接，获取读卡器列表并选择指定的读卡器。
+
+    <GO>
+
+    ```
+    ctx, err := scard.EstablishContext()
+    if err != nil {
+        log.Fatal("Failed to establish context:", err)
+    }
+    readers, err := ctx.ListReaders()
+    if err != nil {
+        log.Fatal("Failed to list readers:", err)
+    }
+    reader := readers[0]
+    ```
+
+2. **建立与安全芯片的连接**
+    Go 程序通过 PC/SC 标准库与安全芯片建立连接，并获取通信句柄。
+
+    <GO>
+
+    ```
+    card, err := ctx.Connect(reader, scard.ShareShared, scard.ProtocolAny)
+    if err != nil {
+        log.Fatal("Failed to connect to card:", err)
+    }
+    ```
+
+3. **发送 APDU 命令**
+    Go 程序通过 PC/SC 标准库向安全芯片发送 APDU 命令，并接收响应。
+
+    <GO>
+
+    ```
+    command := []byte{0x00, 0xA1, 0x00, 0x00, 0x00, 0x01}
+    response, err := card.Transmit(command)
+    if err != nil {
+        log.Fatal("Failed to transmit APDU command:", err)
+    }
+    ```
+
+4. **处理 APDU 响应**
+    Go 程序解析 APDU 响应，根据响应状态码和数据执行相应的操作。
+
+    <GO>
+
+    ```
+    if response[len(response)-2] == 0x90 && response[len(response)-1] == 0x00 {
+        log.Println("APDU command executed successfully")
+    } else {
+        log.Println("APDU command failed")
+    }
+    ```
