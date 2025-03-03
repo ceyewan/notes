@@ -61,7 +61,7 @@ close(ch)
 
 ## 5 发送数据
 
-在 Go 中，向 Channel 发送数据的操作通过 `ch <- i` 语句实现。编译器会将这一语句解析为 `OSEND` 节点，并在编译时将其转换为 `runtime.chansend1` 的调用。它只是简单地调用 `runtime.chansend` 并传入 Channel 和需要发送的数据。`runtime.chansend` 是发送数据的核心函数，其逻辑如下：
+在 Go 中，向 Channel 发送数据的操作通过 `ch <- i` 语句实现。编译器会将这一语句解析为 `OSEND` 节点，并在编译时将其转换为 `runtime.chansend1` 的调用。它只是简单地调用 `runtime.chansend` 并传入 Channel 和需要发送的数据。`runtime.chansend` 是发送数据的核心函数，首先，会执行如下操作。
 
 - **加锁**：在发送数据之前，Channel 会被加锁，以确保线程安全。
 - **检查关闭状态**：如果 Channel 已关闭，发送操作会触发 panic，抛出 "send on closed channel" 错误。
@@ -70,5 +70,56 @@ close(ch)
 
 如果 Channel 的接收队列 `recvq` 中存在等待的 goroutine，发送操作会直接将数据传递给接收者，而不会写入缓冲区。
 
+其中，send 函数的逻辑如下：
+
 - 调用 `runtime.sendDirect` 将数据直接拷贝到接收者的内存地址。
 - 调用 `runtime.goready` 将接收者 goroutine 标记为可运行状态，并将其放入当前处理器的 `runnext` 队列，等待调度器唤醒。
+
+### 5.2 写入缓冲区
+
+如果 Channel 的缓冲区未满，发送操作会将数据写入缓冲区。
+
+- 计算缓冲区中下一个可写入的位置 `sendx`。
+- 将数据拷贝到缓冲区中，并更新 `sendx` 和 `qcount`。
+- 如果 `sendx` 达到缓冲区大小，则将其重置为 0（环形缓冲区）。
+
+### 5.3 阻塞发送
+
+如果 Channel 的缓冲区已满且没有等待的接收者，发送操作会阻塞当前 goroutine，直到有接收者或缓冲区有空间。
+
+- 获取当前 goroutine 并创建一个 `sudog` 结构，用于表示当前发送操作。
+- 将 `sudog` 加入 Channel 的发送队列 `sendq`。
+- 调用 `runtime.goparkunlock` 将当前 goroutine 挂起，等待被唤醒。
+- 被唤醒后，清理 `sudog` 并返回成功。
+
+## 6 接收数据
+
+在 Go 中，从 Channel 接收数据的操作可以通过 `i <- ch` 和 `i, ok <- ch` 这两种方式来实现，这两种方式会被编译器分别解析为 `ORECV` 和 `OAS2RECV` 节点，最终调用的核心逻辑都在 `runtime.chanrecv` 中实现。首先，进入如下操作。
+
+- **空 Channel**：如果 Channel 为 `nil`，且操作是阻塞的，当前 goroutine 会被挂起。
+- **已关闭的 Channel**：如果 Channel 已关闭且缓冲区为空，接收操作会返回零值，并将 `received` 设置为 `false`。
+
+### 6.1 直接接收
+
+如果 Channel 的发送队列 `sendq` 中存在等待的 goroutine，接收操作会直接从发送者获取数据。
+
+- 如果 Channel 无缓冲区，调用 `runtime.recvDirect` 将发送者的数据直接拷贝到接收者的内存地址。
+- 如果 Channel 有缓冲区，将缓冲区中的数据拷贝到接收者，并将发送者的数据写入缓冲区。
+- 调用 `runtime.goready` 将发送者 goroutine 标记为可运行状态，并放入当前处理器的 `runnext` 队列。
+
+### 6.2 从缓冲区接收
+
+如果 Channel 的缓冲区不为空，接收操作会从缓冲区中读取数据。
+
+- 计算缓冲区中下一个可读取的位置 `recvx`。
+- 将数据拷贝到接收者的内存地址，并清空缓冲区中的该位置。
+- 更新 `recvx` 和 `qcount`。如果 `recvx` 达到缓冲区大小，则将其重置为 0（环形缓冲区）。
+
+### 6.3 阻塞接收
+
+如果 Channel 的缓冲区为空且没有等待的发送者，接收操作会阻塞当前 goroutine。
+
+- 获取当前 goroutine 并创建一个 `sudog` 结构，用于表示当前接收操作。
+- 将 `sudog` 加入 Channel 的接收队列 `recvq`。
+- 调用 `runtime.goparkunlock` 将当前 goroutine 挂起，等待被唤醒。
+- 被唤醒后，清理 `sudog` 并返回成功。
