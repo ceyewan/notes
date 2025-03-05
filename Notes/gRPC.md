@@ -46,17 +46,147 @@ Go 标准库 `net/rpc` 提供了一个基于 **TCP 或 HTTP** 的 RPC 框架，�
 Go 的 `net/rpc` 需要遵循特定的服务方法定义规范：
 - 方法必须是 **导出（首字母大写）** 的。
 - 方法必须有两个参数：
-    1. **第一个参数是请求结构体（必须是指针类型）**
-    2. **第二个参数是响应结构体（必须是指针类型）**
+    1. **第一个参数是请求结构体（必须是指针类型且是导出的/内置类型）**
+    2. **第二个参数是响应结构体（必须是指针类型且是导出的/内置类型）**
 - 方法返回值必须是 `error`，用于标识调用成功或失败。
 
-1. **标准库 net/rpc 全解析**
-   - 接口定义规范与注册机制
-   - 同步/异步调用模式对比
+#### 2.1.1 服务器
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/rpc"
+)
+
+// 定义一个结构体，RPC 方法必须绑定到这个结构体上
+type Calculator struct{}
+
+// RPC 方法：求和
+func (c *Calculator) Add(args *Args, reply *int) error {
+	*reply = args.A + args.B
+	return nil
+}
+
+// RPC 方法：除法（包含错误处理）
+func (c *Calculator) Divide(args *Args, reply *float64) error {
+	if args.B == 0 {
+		return errors.New("除数不能为零")
+	}
+	*reply = float64(args.A) / float64(args.B)
+	return nil
+}
+
+// 定义 RPC 方法的参数结构体
+type Args struct {
+	A, B int
+}
+
+// 启动 RPC 服务器
+func main() {
+	calculator := new(Calculator)
+	rpc.Register(calculator) // 注册服务
+	// 监听端口，监听的是 TCP 协议 1234 端口
+	listener, err := net.Listen("tcp", ":1234")
+	if err != nil {
+		fmt.Println("监听失败:", err)
+		return
+	}
+	defer listener.Close()
+	fmt.Println("RPC 服务器启动，监听 1234 端口...")
+	for {
+		// 等待客户端连接，连接成功后返回一个 net.Conn 对象
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("连接失败:", err)
+			continue
+		}
+		// 调用 rpc.ServeConn 处理连接
+		go rpc.ServeConn(conn) // 处理 RPC 连接
+	}
+}
+```
+
+在服务端实现供 RPC 调用的服务时，需要遵循上面说的特定的规范。具体来说，我们需要定义一个接口，并在该接口中实现所有可供 RPC 调用的方法。实现接口后，可以通过 `rpc.Register` 或 `rpc.RegisterName` 将接口实例注册为 RPC 服务。注册后，客户端可以通过 **服务名.方法名** 的形式调用这些方法。
+- **rpc.Register**：该函数会将接口实例注册为 RPC 服务，并使用接口实例的具体类型名作为服务名。服务名是通过**反射机制**获取的，即 `reflect.TypeOf(instance).Name()`。这种方式适用于服务名无需自定义的场景。
+- **rpc.RegisterName**：该函数允许显式指定服务名。与 `rpc.Register` 相比，它多了一个参数，用于自定义服务名。这种方式适用于需要灵活命名服务名的场景，例如提高可读性或避免命名冲突。
+
+接下来，服务器需要通过调用 `net.Listen` 方法来监听指定的网络端口，从而等待客户端的连接请求。一旦成功监听端口并建立连接，服务器会进入连接处理阶段。此时，可以启动一个独立的 Goroutine，调用 `rpc.ServeConn(conn)` 来处理每个客户端的 RPC 请求。
+
+`rpc.ServeConn` 是一个专用于在单个网络连接上运行 `DefaultServer`（默认 RPC 服务器）的函数。它的核心职责是管理客户端与服务器之间的通信，直到客户端断开连接为止。需要注意的是，`ServeConn` 是一个阻塞式函数，这意味着它会持续运行以处理该连接上的所有请求，直到连接终止。由于它仅处理单一连接，因此在高并发场景中，通常需要为每个连接启动一个 Goroutine 来实现并发处理。
+
+#### 2.1.2 客户端
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/rpc"
+)
+
+func main() {
+	client, err := rpc.Dial("tcp", "localhost:1234")
+	if err != nil {
+		fmt.Println("连接 RPC 服务器失败:", err)
+		return
+	}
+	defer client.Close()
+
+	args := Args{A: 10, B: 5}
+	var result1 int
+
+	// 同步调用 Add 方法
+	err = client.Call("Calculator.Add", &args, &result1)
+	if err != nil {
+		fmt.Println("RPC 调用失败:", err)
+		return
+	}
+    fmt.Println("10 + 5 =", result1)
+    
+    var result2 float64
+    // 异步调用 Divide 方法
+	divCall := client.Go("Calculator.Divide", &args, &result2, nil)
+	// 其他任务...
+	
+	// 等待 RPC 结果返回
+	replyCall := <-divCall.Done
+	if replyCall.Error != nil {
+		fmt.Println("RPC 调用失败:", replyCall.Error)
+		return
+	}
+	fmt.Println("10 / 5 =", result2)
+}
+```
+
+在 `net/rpc` 中，客户端的调用方式主要分为两种：
+
+1. **同步调用**：方法调用会阻塞当前线程，直到服务器返回结果或发生错误。
+2. **异步调用**：方法调用后立即返回一个 `Call` 结构体，结果通过 `Call` 的 `Done` 通道异步传递。
+
+`Client.Call` 方法本质上是一个同步调用，它的实现实际上是基于异步调用 `Client.Go` 方法完成的。具体过程可以概括如下：
+1. 调用 `Client.Go` 方法，发起异步请求，并返回一个 `Call` 结构体，该结构体包含调用的状态信息。
+2. 通过监听 `Call` 结构体的 `Done` 通道，阻塞等待调用完成。
+3. 调用完成后，返回结果或错误状态。
+
+```go
+// 1. 发起异步调用，返回 Call 结构体
+result := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
+// 2. 等待调用完成，通过 Done 通道获取结果
+call := <-result.Done
+// 3. 返回调用的错误状态
+return call.Error
+```
+
+如果需要直接进行异步调用，可以显式调用 `Client.Go` 方法。该方法会返回一个 `Call` 结构体，开发者可以通过监听 `Call.Done` 通道来获取调用结果，从而实现非阻塞式调用。
+
    - 自定义编解码器实现（Gob vs JSON）
    - 连接池管理与超时控制策略
 
-2. **JSON-RPC 实战**
+3. **JSON-RPC 实战**
    - HTTP 协议承载 RPC 的实现
    - 跨语言通信案例（Python ↔ Go）
    - 负载均衡场景下的连接管理
