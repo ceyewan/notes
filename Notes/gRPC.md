@@ -183,10 +183,53 @@ return call.Error
 
 如果需要直接进行异步调用，可以显式调用 `Client.Go` 方法。该方法会返回一个 `Call` 结构体，开发者可以通过监听 `Call.Done` 通道来获取调用结果，从而实现非阻塞式调用。
 
-   - 自定义编解码器实现（Gob vs JSON）
-   - 连接池管理与超时控制策略
+#### 2.1.3 连接池与超时控制
 
-3. **JSON-RPC 实战**
+在高并发场景下，频繁调用 `rpc.Dial()` 会导致每次请求都建立一个新连接，从而引发资源浪费（例如过多的 TCP 连接开销）。为了解决这个问题，可以通过 **连接池** 来复用已有的连接，减少系统资源的消耗并提升性能。
+
+```go
+// 存储可复用的 RPC 客户端连接，核心是一个缓冲通道
+type RPCPool struct {
+	conns chan *rpc.Client
+}
+
+func NewRPCPool(size int, address string) (*RPCPool, error) {
+	pool := &RPCPool{conns: make(chan *rpc.Client, size)}
+	for i := 0; i < size; i++ {
+		client, err := rpc.Dial("tcp", address)
+		if err != nil {
+			return nil, err
+		}
+		pool.conns <- client
+	}
+	return pool, nil
+}
+// 从连接池中获取一个可用的 RPC 客户端连接
+func (p *RPCPool) Get() *rpc.Client {
+	return <-p.conns
+}
+// 将使用完毕的 RPC 客户端连接归还到连接池中
+func (p *RPCPool) Put(client *rpc.Client) {
+	p.conns <- client
+}
+```
+
+可以使用 `net.DialTimeout()` 限制连接时间，避免长时间阻塞：
+
+```go
+conn, err := net.DialTimeout("tcp", "localhost:1234", 2*time.Second)
+```
+
+或者在 RPC 调用时使用 `context.WithTimeout()`：
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+err := client.CallContext(ctx, "Calculator.Add", &args, &result)
+```
+
+### 2.2 JSON-RPC 实战
+
    - HTTP 协议承载 RPC 的实现
    - 跨语言通信案例（Python ↔ Go）
    - 负载均衡场景下的连接管理
