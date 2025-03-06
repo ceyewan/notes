@@ -345,7 +345,16 @@ http {
 
 ---
 
-## 3 gRPC 生态系统深度掌握
+## 3 gRPC
+
+gRPC 支持 **四种调用方式**：
+
+| **模式**                          | **客户端**   | **服务器**   |
+| ------------------------------- | --------- | --------- |
+| **Unary RPC（普通 RPC）**           | 发送单个请求    | 返回单个响应    |
+| **Server Streaming RPC**        | 发送单个请求    | 返回多个响应（流） |
+| **Client Streaming RPC**        | 发送多个请求（流） | 返回单个响应    |
+| **Bidirectional Streaming RPC** | 发送多个请求（流） | 返回多个响应（流） |
 
 ### 3.1 Protocol Buffers 语法（v3）
 
@@ -392,6 +401,78 @@ protoc --go-grpc_out=. hello.proto
 生成两个文件：
 - `helloworld.pb.go`（数据结构和序列化代码）
 - `helloworld_grpc.pb.go`（gRPC 服务接口）
+
+### 3.2 HelloWorld（Unary RPC）
+
+#### 3.2.1 Proto 文件
+
+```proto
+syntax = "proto3";
+
+package helloworld;
+
+// 添加这一行指定生成的Go代码的包路径
+option go_package = "./proto";
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+```
+
+定义了一个 RPC 方法，指定了输入和输出的参数，可以自动生成相关的代码，不需要手动实现了。
+
+#### 3.2.2 服务端
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"net"
+
+	pb "helloworld/proto/helloworld"
+
+	"google.golang.org/grpc"
+)
+
+type server struct {
+    // 内嵌UnimplementedGreeterServer以保证向前兼容
+    // 这个东西也实现了 SayHello，就算用户忘记了实现也不报错
+	pb.UnimplementedGreeterServer
+}
+
+func (s *server) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloReply, error) {
+	return &pb.HelloReply{Message: "Hello, " + req.Name}, nil
+}
+
+// 匿名类型转换，编译时验证 server 实现了 GreeterServer 接口
+var _ pb.GreeterServer = (*server)(nil)
+
+func main() {
+    // 监听端口
+	listener, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("监听失败: %v", err)
+	}
+	// 启动 grpc 服务器并注册 GreeterServer RPC 服务
+	s := grpc.NewServer()
+	pb.RegisterGreeterServer(s, &server{})
+	log.Println("gRPC 服务器启动...")
+	
+	if err := s.Serve(listener); err != nil {
+		log.Fatalf("启动失败: %v", err)
+	}
+}
+```
 
 ---
 
