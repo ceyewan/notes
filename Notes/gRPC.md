@@ -467,16 +467,164 @@ func main() {
 	s := grpc.NewServer()
 	pb.RegisterGreeterServer(s, &server{})
 	log.Println("gRPC 服务器启动...")
-	
+	// 提供服务
 	if err := s.Serve(listener); err != nil {
 		log.Fatalf("启动失败: %v", err)
 	}
 }
 ```
 
+#### 3.2.3 客户端
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	pb "helloworld/proto/helloworld"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+func main() {
+    // 拨号连接服务器，使用不安全的连接
+	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("连接失败: %v", err)
+	}
+	defer conn.Close()
+    // 注册 GreeterClient 客户端
+	client := pb.NewGreeterClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+    // 调用 RPC 服务
+	resp, err := client.SayHello(ctx, &pb.HelloRequest{Name: "Alice"})
+	if err != nil {
+		log.Fatalf("调用失败: %v", err)
+	}
+	fmt.Println("服务端返回:", resp.Message)
+}
+```
+
+我们可以发现，其实使用了 gRPC 后，代码更加简单了，也更方面维护。
+
+### 3.3 Watch（Server Streaming RPC）
+
+#### 3.3.1 Proto
+
+```proto
+syntax = "proto3";
+
+package watch;
+
+// 添加这一行指定生成的Go代码的包路径
+option go_package = "./proto/watch";
+
+service WatchService {
+    rpc Watch (WatchRequest) returns (stream WatchResponse);
+  }
+  
+  message WatchRequest {
+    string key = 1;
+  }
+  
+  message WatchResponse {
+    string update = 1;
+  }
+```
+
+#### 3.3.2 服务端
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"time"
+
+	pb "watch/proto/watch"
+	"google.golang.org/grpc"
+)
+
+type watchServer struct {
+	pb.UnimplementedWatchServiceServer
+}
+
+func (s *watchServer) Watch(req *pb.WatchRequest, stream pb.WatchService_WatchServer) error {
+	for i := 0; i < 5; i++ {
+		resp := &pb.WatchResponse{Update: fmt.Sprintf("Update %d for key %s", i, req.Key)}
+		stream.Send(resp)
+		time.Sleep(time.Second) // 模拟变化
+	}
+	return nil
+}
+
+func main() {
+	listener, err := net.Listen("tcp", ":50052")
+	if err != nil {
+		log.Fatalf("监听失败: %v", err)
+	}
+	s := grpc.NewServer()
+	pb.RegisterWatchServiceServer(s, &watchServer{})
+	log.Println("gRPC Watch 服务器启动...")
+	if err := s.Serve(listener); err != nil {
+		log.Fatalf("启动失败: %v", err)
+	}
+}
+```
+
+#### 3.3.3 客户端
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+
+	pb "watch/proto/watch"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+func main() {
+	conn, err := grpc.Dial("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("连接失败: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewWatchServiceClient(conn)
+	stream, _ := client.Watch(context.Background(), &pb.WatchRequest{Key: "config"})
+
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		fmt.Println("收到更新:", resp.Update)
+	}
+}
+```
+
 ---
 
+### 3.4 Pub/Sub（Bidirectional Streaming RPC）
+
+
+
 ## 4 RPC 底层协议栈拆解
+
 1. **序列化协议性能之战**
    - Protobuf 编码原理与 varint 优化
    - FlatBuffers 零拷贝特性解析
