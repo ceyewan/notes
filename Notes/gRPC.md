@@ -237,20 +237,161 @@ err := client.CallContext(ctx, "Calculator.Add", &args, &result)
 > - **Protobuf**（Protocol Buffers）：Google 开发的高效二进制序列化协议，支持多种语言，适用于高性能和跨平台的通信场景。
 
 默认的 `net/rpc` 提供以下几种传输协议和序列化方式的组合：
-1. **默认方式（TCP + Gob）**：用法：`rpc.Dial("tcp", "localhost:1234")`，如上；
-2. **使用 HTTP 承载 RPC（HTTP + Gob）**：用法：`rpc.DialHTTP("tcp", "localhost:8080")`；
-3. **使用 TCP 承载 JSON-RPC（TCP + JSON）**：
+1. **默认方式（TCP + Gob）**：`rpc.Dial("tcp", "localhost:1234")`，如上；
+2. **使用 HTTP 承载 RPC（HTTP + Gob）**：`rpc.DialHTTP("tcp", "localhost:8080")`；
+3. **使用 TCP 承载 JSON-RPC（TCP + JSON）**：`go jsonrpc.ServeConn(conn)`；
+4. **使用 HTTP 承载 JSON-RPC（HTTP + JSON）**：`jsonrpc.NewServerCodec()`。
 
-#### 2.2.1 服务端
+如果我们要实现 TCP+JSON，我们只需要将服务端的 `rpc.ServeConn` 修改为 `jsonrpc.ServeConn`，将客户端的 `rpc.Dial` 修改为 `jsonrpc.Dial` 即可。实际上，这二者是一样的，进行了一次封装罢了：
+
+```go
+func ServeConn(conn io.ReadWriteCloser) {
+    rpc.ServeCodec(NewServerCodec(conn))
+}
+```
+
+- `rpc.ServeCodec` 是 `net/rpc` 包提供的一个底层函数，用于处理自定义的编解码器（Codec）。
+- `jsonrpc.NewServerCodec(conn)` 创建了一个 JSON-RPC 的编解码器，用于将 JSON 数据解析为 RPC 请求，并将 RPC 响应编码为 JSON 数据。
+
+| **传输协议 + 序列化**  | **优点**                     | **缺点**                      | **适用场景**                |
+| --------------- | -------------------------- | --------------------------- | ----------------------- |
+| **TCP + Gob**   | **最高性能**，数据量小，适合长连接        | 仅限 Go 语言，调试不直观              | **Go 内部高效通信**           |
+| **TCP + JSON**  | 兼容多语言，支持长连接                | JSON 开销比 Gob 高              | **跨语言高性能 RPC**          |
+| **HTTP + Gob**  | 易用，兼容 HTTP 生态（路由、认证、负载均衡等） | 仅限 Go 语言                    | **Go 内部 RPC，适合短连接**     |
+| **HTTP + JSON** | **最通用，支持跨语言**，调试方便         | 最低性能（HTTP 额外开销 + JSON 序列化慢） | **适合对外开放 API，微服务，前端交互** |
+
+#### 2.2.1 基于 HTTP 的 JSON-RPC 服务器
+
+```go
+func main() {
+	rpc.Register(new(Calculator)) // 注册 RPC 服务
+	// 在 /jsonrpc 路径上配置一个 HTTP 处理函数
+	http.HandleFunc("/jsonrpc", func(w http.ResponseWriter, r *http.Request) {
+		// 创建连接适配器，将HTTP请求体和响应体适配为RPC连接
+		var conn io.ReadWriteCloser = struct {
+			io.Writer
+			io.ReadCloser
+		}{
+			ReadCloser: r.Body,
+			Writer:     w,
+		}
+		// 使用jsonrpc处理连接
+		jsonrpc.ServeConn(conn)
+	})
+	// 启动HTTP服务器
+	fmt.Println("HTTP-JSON RPC 服务器启动，监听 8080 端口...")
+	http.ListenAndServe(":8080", nil)
+}
+```
+
+这里创建了一个匿名结构体，实现了 `io.ReadWriteCloser` 接口：
+- `io.Writer`：用于写入数据（响应）
+- `io.ReadCloser`：用于读取数据（请求）并支持关闭
+
+这个结构体将 HTTP 请求体和 HTTP 响应写入器组合起来，形成一个 RPC 连接适配器。
+
+#### 2.2.2 基于 HTTP 的 JSON-RPC 客户端
+
+```python
+import json
+import requests
+
+url = "http://localhost:8080/jsonrpc"
+headers = {"Content-Type": "application/json"}
+
+# 发送 JSON-RPC 请求
+payload = {
+    "method": "Calculator.Add",
+    "params": [{"A": 10, "B": 5}],
+    "id": 1,
+    "jsonrpc": "2.0"
+}
+
+response = requests.post(url, headers=headers, data=json.dumps(payload))
+
+print("服务器响应:", response.json())
+```
+
+和正常的 HTTP 请求差不多，只需要打包一个参数发送过去。
+
+#### 2.2.3 负载均衡
+
+在生产环境中，单个 RPC 服务器的吞吐量通常难以满足高并发场景的需求，因此需要部署**多个 RPC 服务器**来分担流量。这时，就涉及到**负载均衡**的设计与实现。通过负载均衡器，可以将客户端的请求均匀分发到多个后端服务器，从而提升系统的整体性能和可用性。
+
+一种常见的解决方案是使用 **Nginx 反向代理** 作为负载均衡器，将客户端请求统一分发到多个 RPC 服务器。以下是一个示例配置，假设有两个 Go RPC 服务器分别运行在 `127.0.0.1:8081` 和 `127.0.0.1:8082`，可以通过 Nginx 的轮询机制实现负载均衡：
+
+```nginx
+http {
+    upstream jsonrpc_servers {
+        least_conn; # 将请求分发到当前连接数最少的服务器
+        server 127.0.0.1:8081;
+        server 127.0.0.1:8082;
+    }
+
+    server {
+        listen 8080;
+        
+        location /rpc {
+            proxy_pass http://jsonrpc_servers; # 将请求转发到上游服务器组
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+    }
+}
+```
+
+启动 Nginx 后，客户端请求 `http://localhost:8080/rpc`，Nginx 会自动在 `8081` 和 `8082` 之间按照负载均衡策略分发。
 
 ---
 
 ## 3 gRPC 生态系统深度掌握
-   - Protocol Buffers 语法精讲（v3 特性）
-   - 四种服务方法实践：Unary/ServerStreaming/ClientStreaming/Bidirectional
-   - 拦截器开发（认证/日志/监控）
-   - Gateway 实现 RESTful 接口转换
-   - 健康检查与负载均衡集成
+
+### 3.1 Protocol Buffers 语法（v3）
+
+Protocol Buffers（简称 Protobuf）是 Google 开发的一种用于**序列化结构化数据**的语言中立、平台中立、可扩展的机制。它广泛用于数据交换、存储和通信协议。
+
+Proto3 文件以 `.proto` 为扩展名，文件结构通常包括以下部分：
+
+- **syntax**：指定使用的 Protobuf 版本（`proto3`）。
+- **package**：定义包名，用于防止命名冲突。
+- **message**：定义数据结构。
+- **service**：定义 RPC 服务接口。
+
+```proto
+syntax = "proto3";  // 指定使用 proto3 语法
+package example;    // 定义包名
+
+message Example {
+  int32 id = 1;                  // 标量类型
+  repeated string tags = 2;      // 重复类型
+  map<string, int32> scores = 3; // 映射类型
+}
+
+service Greeter {
+  rpc SayHello (Example) returns (Example); // 定义 RPC 方法
+}
+```
+
+1. **字段编号**：每个字段需分配唯一编号（1-536870911），用于序列化标识。
+2. **默认值**：Proto3 为每种类型提供默认值（如 `0`、空字符串等）。
+3. **复合类型**：支持嵌套 `message`、`enum`，以及 `repeated`（列表）和 `map`（键值对）。
+4. **RPC 服务**：通过 `service` 和 `rpc` 定义服务接口，常用于 gRPC。
+
+Protobuf 核心的工具集是 C++ 语言开发的，在官方的 protoc 编译器中并不支持 Go 语言。要想从上面的文件生成对应的 Go 代码，需要安装相应的插件。
+
+```shell
+brew install protobuf # 安装 protobuf
+protoc --version
+go get github.com/golang/protobuf/protoc-gen-go # 安装 go 插件
+export PATH=$PATH:$(go env GOPATH)/bin # 添加插件路径
+protoc --go_out=. hello.proto
+protoc --go-grpc_out=. hello.proto
+```
+
+生成两个文件：
+- `helloworld.pb.go`（数据结构和序列化代码）
+- `helloworld_grpc.pb.go`（gRPC 服务接口）
 
 ---
 
