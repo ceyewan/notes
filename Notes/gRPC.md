@@ -347,15 +347,6 @@ http {
 
 ## 3 gRPC
 
-gRPC 支持 **四种调用方式**：
-
-| **模式**                          | **客户端**   | **服务器**   |
-| ------------------------------- | --------- | --------- |
-| **Unary RPC（普通 RPC）**           | 发送单个请求    | 返回单个响应    |
-| **Server Streaming RPC**        | 发送单个请求    | 返回多个响应（流） |
-| **Client Streaming RPC**        | 发送多个请求（流） | 返回单个响应    |
-| **Bidirectional Streaming RPC** | 发送多个请求（流） | 返回多个响应（流） |
-
 ### 3.1 Protocol Buffers 语法（v3）
 
 Protocol Buffers（简称 Protobuf）是 Google 开发的一种用于**序列化结构化数据**的语言中立、平台中立、可扩展的机制。它广泛用于数据交换、存储和通信协议。
@@ -577,6 +568,8 @@ type pubSubServer struct {
 	redisClient *redis.Client
 }
 
+var _ pb.PubSubServer = (*pubSubServer)(nil)
+
 func NewPubSubServer() *pubSubServer {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -757,29 +750,149 @@ func main() {
 }
 ```
 
+gRPC 支持 **四种调用方式**：
+
+| **模式**                          | **客户端**   | **服务器**   |
+| ------------------------------- | --------- | --------- |
+| **Unary RPC（普通 RPC）**           | 发送单个请求    | 返回单个响应    |
+| **Server Streaming RPC**        | 发送单个请求    | 返回多个响应（流） |
+| **Client Streaming RPC**        | 发送多个请求（流） | 返回单个响应    |
+| **Bidirectional Streaming RPC** | 发送多个请求（流） | 返回多个响应（流） |
+
+**普通 RPC**：
+- 客户端发送一个请求，服务器返回一个响应；
+- 方法签名类似于 `rpc GetUserInfo(GetUserRequest) returns (GetUserResponse);`
+- 在 gRPC 代码中，方法通常为 `func (s *server) GetUserInfo(ctx context.Context, req *GetUserRequest) (*GetUserResponse, error)`
+
+流式 RPC 分为三种类型：客户端流式（Client Streaming）、服务器流式（Server Streaming）、双向流式（Bidirectional Streaming）。它们的方法签名不同的关键点在于 **流式通信的特性**，即请求和响应的数据不再是单一的，而是可以持续传输，因此返回值需要是一个流对象。
+**服务器流式**：
+
+```go
+// rpc ListUsers(ListUsersRequest) returns (stream ListUsersResponse);
+func (s *server) ListUsers(req *ListUsersRequest, stream YourService_ListUsersServer) error {
+    for _, user := range users {
+        stream.Send(&ListUsersResponse{User: user})
+
+    }
+    return nil
+}
+```
+
+**客户端流式**：
+
+```go
+// rpc UploadLogs(stream UploadLogsRequest) returns (UploadLogsResponse);
+func (s *server) UploadLogs(stream YourService_UploadLogsServer) error {
+    for {
+        req, err := stream.Recv()
+        if err == io.EOF {
+            return stream.SendAndClose(&UploadLogsResponse{Message: "Upload complete"})
+        }
+    }
+}
+```
+
+**双向流式**：
+
+```go
+// rpc Chat(stream ChatMessage) returns (stream ChatMessage);
+func (s *server) Chat(stream YourService_ChatServer) error {
+    for {
+        msg, err := stream.Recv()
+        if err == io.EOF {
+            return nil
+        }
+        stream.Send(&ChatMessage{Content: "Echo: " + msg.Content})
+    }
+}
+```
+
+- 普通 RPC 直接返回单个值，所以方法返回值可以是 (Response, error)。
+- 流式 RPC 需要多次发送或接收数据，如果用返回值来传递流对象，将无法在方法内部循环调用 Send() 或 Recv()。
+- 因此，流式 RPC 的 stream 被作为 **方法参数** 传入，服务器可以持续对其进行读写，而返回值一般是 error，用于标记流结束。
+
+**断开连接**：
+
+```go
+// 客户端调用 CloseSend() 关闭发送流，服务器 Recv() 方法返回 io.EOF
+stream.CloseSend()
+// 服务器返回 nil 或 error，gRPC 运行时会关闭连接
+return nil  // 正常关闭
+return status.Errorf(codes.Internal, "Server error")  // 服务器错误
+```
+
 ## 4 RPC 底层协议栈拆解
 
-1. **序列化协议性能之战**
-   - Protobuf 编码原理与 varint 优化
-   - FlatBuffers 零拷贝特性解析
-   - Avro Schema 演进策略
+gRPC 作为一个高性能的 RPC 框架，基于 HTTP/2 进行通信，并采用 Protocol Buffers（protobuf）作为数据序列化格式。
 
-2. **传输层关键技术**
-   - HTTP/2 多路复用实现机制
-   - QUIC 协议在 RPC 中的创新应用
-   - 自定义私有协议设计实践
+### 4.1 概述
 
----
+![image.png](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/20250124164401.png)
 
-## 5 高可用架构设计模式
-1. **服务治理三剑客**
-   - 基于 Etcd/ZooKeeper 的服务发现
-   - 负载均衡算法实现（P2C/一致性哈希）
-   - 熔断器模式与弹性恢复策略（Hystrix-go）
+gRPC 采用 **分层架构** 进行设计，大致可以分为以下层次：
 
----
+1. **应用层（Application Layer）**：定义 RPC 方法，应用程序调用 gRPC 生成的客户端和服务器端代码。
+2. **API 层（API Layer）**：gRPC 代码生成器将 protobuf 定义的服务接口转换为不同语言的 gRPC API。
+3. **Stub 层（Stub Layer）**：处理请求封装、数据序列化、压缩等操作。
+4. **传输层（Transport Layer）**：依赖 HTTP/2 进行高效的多路复用和流式数据传输。
+5. **网络层（Network Layer）**：基于 TCP 进行数据传输，并支持 TLS 进行安全通信。
 
-## 6 分布式系统挑战赛
-   - 分布式事务协调器开发
-   - 最终一致性保障机制
-   - 全局唯一 ID 生成器集群
+### 4.2 多路复用
+
+在传统的 HTTP/1.1 中，每个请求都需要一个单独的 TCP 连接，多个并发请求可能导致连接资源浪费或性能瓶颈。而 **HTTP/2 引入了多路复用（Multiplexing）**，允许多个数据流在同一条 TCP 连接上并行传输，大大提高了传输效率。
+
+每个 RPC 调用都是一个 HTTP/2 流（Stream），每个流有唯一的 **Stream ID**，用于区分不同的 RPC 请求。客户端和服务器可以并发发送多个流，而不需要多个 TCP 连接。
+
+假设我们有多个 RPC 请求，如果客户端同时调用 SayHello 和 GetUserProfile：
+
+```go
+go func() {
+    resp, _ := client.SayHello(ctx, &pb.HelloRequest{Name: "Alice"})
+    log.Println("SayHello Response:", resp.Message)
+}()
+
+go func() {
+    resp, _ := client.GetUserProfile(ctx, &pb.UserRequest{Id: 1})
+    log.Println("GetUserProfile Response:", resp.Profile)
+}()
+```
+
+两个 RPC 请求会在**同一个 TCP 连接**上以**不同的 HTTP/2 流 ID** 并行传输，而不会相互阻塞。
+
+### 4.3 负载均衡
+
+gRPC 主要通过 **客户端负载均衡（Client-side Load Balancing）** 和 **服务端负载均衡（Server-side Load Balancing）** 两种方式来实现负载均衡。
+
+1. **客户端负载均衡**（常见于 Kubernetes、微服务架构）
+    - 客户端维护一个服务端地址列表，并在调用时自行选择一个服务器进行请求。
+    - 适用于**客户端知道所有可用服务实例**的情况，减少负载均衡代理的开销。
+2. **服务端负载均衡**（常见于 Envoy、NGINX 代理）
+    - 通过**负载均衡代理**（如 Envoy、NGINX）在服务器端进行流量分发。
+    - 适用于**动态扩缩容**的场景，客户端只需连接代理，代理负责请求分发。
+
+gRPC **内置支持客户端负载均衡**，可以使用 grpc.WithBalancerName("round_robin") 来启用轮询策略。
+
+```go
+// 创建 gRPC 连接，使用 round_robin 负载均衡
+conn, err := grpc.Dial(
+    "localhost:50051,localhost:50052", // 多个地址
+    grpc.WithInsecure(),
+    grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy": "round_robin"}`),
+)
+```
+
+### 4.4 身份认证
+
+gRPC 支持使用 TLS/SSL、Token 认证等。
+
+### 4.5 HTTP/2
+
+gRPC **基于 HTTP/2 协议**，相比传统的 HTTP/1.1，HTTP/2 提供了**多路复用、流量控制、头部压缩、服务器推送等特性**，使 gRPC 具有**高效、低延迟**的通信能力。
+
+|**HTTP/2 特性**|**在 gRPC 中的作用**|
+|---|---|
+|**多路复用（Multiplexing）**|**单个 TCP 连接** 处理多个并发请求，避免队头阻塞（HoL Blocking）。|
+|**流（Stream）**|gRPC 中的每个 RPC 调用都是一个独立的 HTTP/2 **Stream**，支持双向流式通信。|
+|**头部压缩（HPACK）**|gRPC **压缩 Metadata**，减少带宽占用，提高性能。|
+|**服务器推送**|服务器可以主动推送数据，提高实时性（在 gRPC Server Streaming 模式下使用）。|
+|**流量控制**|HTTP/2 提供**基于流的流量控制**，gRPC 可以动态调整数据流速度，防止网络拥塞。|
