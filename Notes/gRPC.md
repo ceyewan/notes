@@ -513,115 +513,249 @@ func main() {
 
 我们可以发现，其实使用了 gRPC 后，代码更加简单了，也更方面维护。
 
-### 3.3 Watch（Server Streaming RPC）
+### 3.3 Pub/Sub（Bidirectional Streaming RPC）
 
 #### 3.3.1 Proto
 
 ```proto
 syntax = "proto3";
 
-package watch;
+package pubsub;
 
-// 添加这一行指定生成的Go代码的包路径
-option go_package = "./proto/watch";
+option go_package = "./proto/pubsub";
 
-service WatchService {
-    rpc Watch (WatchRequest) returns (stream WatchResponse);
-  }
-  
-  message WatchRequest {
-    string key = 1;
-  }
-  
-  message WatchResponse {
-    string update = 1;
-  }
-```
-
-#### 3.3.2 服务端
-
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-	"net"
-	"time"
-
-	pb "watch/proto/watch"
-	"google.golang.org/grpc"
-)
-
-type watchServer struct {
-	pb.UnimplementedWatchServiceServer
+// PubSub 服务定义
+service PubSub {
+    // 发布消息
+    rpc Publish (PublishRequest) returns (PublishResponse);
+    // 订阅消息
+    rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse);
 }
 
-func (s *watchServer) Watch(req *pb.WatchRequest, stream pb.WatchService_WatchServer) error {
-	for i := 0; i < 5; i++ {
-		resp := &pb.WatchResponse{Update: fmt.Sprintf("Update %d for key %s", i, req.Key)}
-		stream.Send(resp)
-		time.Sleep(time.Second) // 模拟变化
-	}
-	return nil
+// 发布消息请求
+message PublishRequest {
+    string topic = 1; // 主题
+    string message = 2; // 消息内容
 }
 
-func main() {
-	listener, err := net.Listen("tcp", ":50052")
-	if err != nil {
-		log.Fatalf("监听失败: %v", err)
-	}
-	s := grpc.NewServer()
-	pb.RegisterWatchServiceServer(s, &watchServer{})
-	log.Println("gRPC Watch 服务器启动...")
-	if err := s.Serve(listener); err != nil {
-		log.Fatalf("启动失败: %v", err)
-	}
+// 发布消息响应
+message PublishResponse {
+    bool success = 1; // 是否成功
+}
+
+// 订阅消息请求
+message SubscribeRequest {
+    string topic = 1; // 主题
+}
+
+// 订阅消息响应
+message SubscribeResponse {
+    string message = 1; // 收到的消息
 }
 ```
 
-#### 3.3.3 客户端
+#### 3.3.2 服务器
 
 ```go
 package main
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"log"
+	"net"
 
-	pb "watch/proto/watch"
-
+	"github.com/go-redis/redis/v8"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	pb "pubsub/proto/pubsub"
 )
 
-func main() {
-	conn, err := grpc.Dial("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+type pubSubServer struct {
+	pb.UnimplementedPubSubServer
+	redisClient *redis.Client
+}
+
+func NewPubSubServer() *pubSubServer {
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+	_, err := redisClient.Ping(context.Background()).Result()
 	if err != nil {
-		log.Fatalf("连接失败: %v", err)
+		log.Fatalf("failed to connect to Redis: %v", err)
 	}
-	defer conn.Close()
+	return &pubSubServer{
+		redisClient: redisClient,
+	}
+}
 
-	client := pb.NewWatchServiceClient(conn)
-	stream, _ := client.Watch(context.Background(), &pb.WatchRequest{Key: "config"})
+func (s *pubSubServer) Publish(ctx context.Context, req *pb.PublishRequest) (*pb.PublishResponse, error) {
+	err := s.redisClient.Publish(ctx, req.Topic, req.Message).Err()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to publish message: %v", err)
+	}
+	return &pb.PublishResponse{Success: true}, nil
+}
 
-	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			break
+func (s *pubSubServer) Subscribe(req *pb.SubscribeRequest, stream pb.PubSub_SubscribeServer) error {
+	pubsub := s.redisClient.Subscribe(stream.Context(), req.Topic)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for msg := range ch {
+		err := stream.Send(&pb.SubscribeResponse{Message: msg.Payload})
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to send message: %v", err)
 		}
-		fmt.Println("收到更新:", resp.Update)
+	}
+	return nil
+}
+
+func main() {
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	server := grpc.NewServer()
+	pb.RegisterPubSubServer(server, NewPubSubServer())
+
+	log.Println("Server is running on port 50051")
+	if err := server.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
 	}
 }
 ```
 
----
+#### 3.3.3 发布者
 
-### 3.4 Pub/Sub（Bidirectional Streaming RPC）
+```go
+package main
 
+import (
+	"context"
+	"log"
+	"math/rand"
+	"strings"
+	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	pb "pubsub/proto/pubsub"
+)
+
+// 生成随机消息
+func generateRandomMessage(r *rand.Rand) string {
+	words := []string{
+		"你好", "世界", "消息", "发布", "订阅", "gRPC", "Golang",
+		"微服务", "分布式", "通信", "实时", "数据", "流", "推送",
+		"事件", "系统", "云原生", "应用", "接口", "协议",
+	}
+	var sb strings.Builder
+	wordCount := 3 + r.Intn(5) // 3-7个词
+	for i := 0; i < wordCount; i++ {
+		if i > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(words[r.Intn(len(words))])
+	}
+	return sb.String()
+}
+
+func publishMessage(client pb.PubSubClient, topic, message string) {
+	resp, err := client.Publish(context.Background(), &pb.PublishRequest{
+		Topic:   topic,
+		Message: message,
+	})
+	if err != nil {
+		log.Printf("发布到主题 %s 失败: %v", topic, err)
+		return
+	}
+	log.Printf("发布到主题 %s 成功: %v, 消息内容: %s", topic, resp.Success, message)
+}
+
+func main() {
+	// 初始化随机数生成器
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("无法连接: %v", err)
+	}
+	defer conn.Close()
+	client := pb.NewPubSubClient(conn)
+	topics := []string{"topic1", "topic2", "topic3"}
+	log.Println("开始轮流发布消息到不同主题...")
+	// 无限循环，每隔一段时间发送一条消息
+	for i := 0; ; i++ {
+		// 选择主题 (轮询方式)
+		topic := topics[i%len(topics)]
+		// 生成随机消息
+		message := generateRandomMessage(r)
+		// 发布消息
+		publishMessage(client, topic, message)
+		// 等待1-3秒
+		sleepTime := 1000 + rand.Intn(2000)
+		time.Sleep(time.Duration(sleepTime) * time.Millisecond)
+	}
+}
+```
+
+#### 3.3.4 订阅者
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"sync"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	pb "pubsub/proto/pubsub"
+)
+
+func subscribeToTopic(client pb.PubSubClient, topic string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	log.Printf("Subscribing to topic: %s", topic)
+	stream, err := client.Subscribe(context.Background(), &pb.SubscribeRequest{
+		Topic: topic,
+	})
+	if err != nil {
+		log.Printf("Could not subscribe to topic %s: %v", topic, err)
+		return
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			log.Printf("Error receiving message from topic %s: %v", topic, err)
+			break
+		}
+		log.Printf("Received message from topic %s: %s", topic, msg.Message)
+	}
+}
+
+func main() {
+	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	defer conn.Close()
+	client := pb.NewPubSubClient(conn)
+	var wg sync.WaitGroup
+	topics := []string{"topic1", "topic2", "topic3"}
+	// 创建三个协程分别订阅不同的主题
+	for _, topic := range topics {
+		wg.Add(1)
+		go subscribeToTopic(client, topic, &wg)
+	}
+	// 等待所有协程完成（实际上不会结束，除非出错）
+	wg.Wait()
+}
+```
 
 ## 4 RPC 底层协议栈拆解
 
