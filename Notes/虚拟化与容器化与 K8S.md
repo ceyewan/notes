@@ -305,4 +305,202 @@ Docker 镜像构建是 Docker 的核心功能，Dockerfile 是构建的蓝图。
 - **减少层数**：每条指令生成一层，合并 RUN 命令减少层数。
 - **清除缓存**：删除临时文件，避免增加镜像体积。
 - **多阶段构建**：在单一 Dockerfile 中定义多个阶段，只保留最终产物。例如第一阶段需要 Go 编译器，第二阶段只需要执行可执行文件，不需要 Go 环境。
-- 
+- `docker build -t myimage .` 解析 Dockerfile，每条指令生成一层。
+
+### 4.3 网络模式
+
+Docker 提供多种网络模式，常见的有 **bridge、host 和 none**，每种模式的实现原理不同。
+
+1. **Bridge 模式**
+    - 创建虚拟网桥 docker0（Linux Bridge），连接宿主机和容器；
+    - 每个容器分配一个虚拟网卡（veth pair），一端连到容器 Namespace，一端连到 docker0；
+    - 容器有独立 IP，通过 NAT 和端口映射与外部通信。
+2. **Host 模式**
+    - 容器直接使用宿主机的网络 Namespace，无隔离；
+    - 不创建虚拟网卡，直接绑定宿主机 IP 和端口。
+3. **None 模式**
+    - 容器有独立网络 Namespace，但不配置任何网络接口。
+    - 只有本地回环接口（lo）。
+
+### 4.4 存储驱动
+
+Docker 的存储驱动管理镜像和容器的文件系统，常见的有 **DeviceMapper** 和 **Overlay2**，性能和适用场景差异显著。
+
+- **DeviceMapper**：使用 Linux 的 Device Mapper 技术，基于块设备，采用写时复制。
+- **Overlay2**：使用 OverlayFS，LowerDir（镜像层）+ UpperDir（容器层）合并为 MergedDir。
+
+## 5 K8s 核心架构
+
+### 5.1 k8s 架构
+
+![Pasted image 20250319165330](https://ceyewan.oss-cn-beijing.aliyuncs.com/typora/Pasted%20image%2020250319165330.png)
+
+在 Kubernetes（K8s）集群中，主要包含 **主节点（Master Node）** 和 **工作节点（Worker Node）**。
+
+- **主节点（Control Plane）** 负责管理整个集群，包括调度、监控和维护集群状态，同时向工作节点下发指令，例如运行指定的容器。
+- **工作节点（Worker Node）** 主要负责运行实际的应用容器，并响应来自主节点的调度指令。
+
+### 5.2 主节点（Control Plane）核心组件
+
+Control Plane 作为 Kubernetes 的控制中心，确保集群稳定运行，主要由以下核心组件构成：
+
+- **etcd**：作为分布式键值存储，存储 Kubernetes 集群的所有配置信息和状态数据，包括 Pod、Service、配置文件等关键信息。保障数据一致性，所有控制组件均通过 API Server 访问 etcd 以获取或更新集群状态。
+- **API server**：作为 Kubernetes 的核心通信入口，所有外部客户端（如 kubectl、Dashboard）和内部组件（如 Controller、Scheduler）均通过 API Server 进行交互。提供 RESTful API 接口，负责处理集群管理请求，并将变更同步到 etcd。
+- **Controller Manager**：负责管理 Kubernetes 内部的各种控制器（Controller），以确保集群的实际状态符合用户设定的期望状态。
+    - **ReplicaSet Controller**：确保 Pod 副本数量始终符合期望值（如自动扩缩容）。
+    - **Node Controller**：监测节点状态，发现故障节点并触发相应恢复机制。
+    - **Job Controller**：管理一次性任务（Job），确保任务按计划执行。
+- **Scheduler**：负责根据集群资源（CPU、内存等）的使用情况，决定新创建的 Pod 应当运行在哪个工作节点上。
+
+### 5.3 工作节点（Worker Node）核心组件
+
+Worker Node 主要用于运行实际的应用容器，核心组件包括：
+
+- **kubelet**：负责与 Control Plane 通信，接收 API Server 下发的 Pod 运行指令，并管理本节点上的 Pod 和容器。监控容器运行状态，并向 Control Plane 反馈节点健康状况。
+- **kube-proxy**：负责维护 Kubernetes 网络规则，确保集群内的 Pod 和 Service 之间的通信。实现负载均衡与网络转发，使 Service 能够将请求正确路由至后端 Pod。
+- **Container Runtime（容器运行时）**：负责拉取容器镜像，并在工作节点上创建、运行和管理容器，典型的容器运行时包括 containerd、CRI-O 和 Docker。
+
+### 5.4 流程串讲
+
+1. 启动三个实例的流程（假设 Deployment 创建 3 个 Pod）
+
+用户执行以下命令创建 Deployment：
+
+```shell
+kubectl create deployment myapp --image=nginx --replicas=3
+```
+
+该命令会创建一个 Deployment，目标是运行 3 个 Nginx Pod。
+2. API Server 处理请求
+    1. 用户请求到达 API Server。
+    2. API Server 将 Deployment 对象写入 etcd，确保数据持久化。
+
+3. Deployment Controller 检测变化
+    1. Deployment Controller 通过 Watch 机制监听 API Server，发现新创建的 Deployment。
+    2. Deployment Controller 检查期望状态（`replicas=3`）与实际状态（当前没有 Pod）不匹配。
+    3. Deployment Controller 创建一个 ReplicaSet 对象（RS），定义 3 个 Pod，并将 ReplicaSet 对象写入 etcd。
+
+4. ReplicaSet Controller 创建 Pod
+    1. ReplicaSet Controller 通过 Watch 机制监听 API Server，发现新创建的 ReplicaSet。
+    2. ReplicaSet Controller 检查期望状态（3 个 Pod）与实际状态（当前没有 Pod）不匹配。
+    3. ReplicaSet Controller 创建 3 个 Pod 定义（Spec），并将 Pod 对象写入 etcd。
+
+5. Scheduler 调度 Pod
+    1. Scheduler 通过 Watch 机制监听 API Server，发现 3 个状态为 `Pending` 的 Pod。
+    2. Scheduler 根据调度算法（如资源需求、节点亲和性等）为每个 Pod 选择合适的节点。
+    3. Scheduler 更新 Pod 的 `nodeName` 字段，将 Pod 绑定到特定节点，并将更新后的 Pod 对象写入 etcd。
+
+6. Kubelet 创建容器
+    1. 每个节点上的 Kubelet 通过 Watch 机制监听 API Server，发现分配给自己的 Pod。
+    2. Kubelet 调用容器运行时（如 Docker、containerd）创建容器。
+    3. Kubelet 更新 Pod 状态为 `Running`，并将更新后的 Pod 对象写入 etcd。
+
+7. Kube-Proxy 配置网络规则
+    1. Kube-Proxy 通过 Watch 机制监听 API Server，发现新创建的 Pod。
+    2. Kube-Proxy 根据 Pod 的 IP 和端口信息，更新节点的网络规则（如 iptables 或 IPVS），确保 Pod 可以被访问。
+
+**如果一个节点挂了，流程如下**：
+
+1. Node Controller 检测节点故障
+    1. Controller Manager 中的 Node Controller 通过定期检查节点心跳，发现某个节点停止响应。
+    2. Node Controller 将节点状态标记为 `Unreachable`。
+
+2. Pod 状态更新**
+    1. 节点上的所有 Pod 状态被更新为 `Unknown` 或 `Terminating`（取决于超时配置）。
+    2. 这些 Pod 不再被视为可用。
+
+3. ReplicaSet Controller 调整 Pod
+    1. ReplicaSet Controller 通过 Watch 机制监听 API Server，发现 Pod 状态变化。
+    2. ReplicaSet Controller 检查期望状态（3 个 Pod）与实际状态（当前少于 3 个 Pod）不匹配。
+    3. ReplicaSet Controller 创建一个新的 Pod（Pod4），并将 Pod 定义写入 etcd。
+
+4. 后续流程
+    1. Scheduler 将新的 Pod 调度到健康的节点。
+    2. Kubelet 在目标节点上创建容器。
+    3. Kube-Proxy 更新网络规则。
+
+- **Deployment Controller** 负责管理应用程序的部署和更新，通过创建和管理 ReplicaSet 间接控制 Pod。
+- **ReplicaSet Controller** 负责确保指定数量的 Pod 副本处于运行状态。
+- **Scheduler** 负责将 Pod 调度到合适的节点。
+- **Kubelet** 负责在节点上创建和管理容器。
+- **Kube-Proxy** 负责配置网络规则，确保 Pod 可以被访问。
+- **Node Controller** 负责监控节点状态，处理节点故障。
+
+## 6 关键资源对象
+
+### 6.1 Pod 设计哲学
+
+Pod 是 K8s 的最小调度单位，体现了其核心设计理念：**容器协作**和**原子性**。Pod 是一个或多个容器的集合，共享网络和存储，运行在同一节点。
+
+**Infra 模式**：每个 Pod 包含一个隐藏的 **Infra 容器**（基础设施容器），负责初始化和维护 Pod 的共享资源。Infra 容器运行时，Pod 存活；若退出，Pod 终止。
+
+**Sidecar 模式**：在 Pod 中运行辅助容器（Sidecar），与主容器协作。
+
+### 6.2 Deployment 滚动更新
+
+Deployment 管理无状态应用，支持滚动更新，确保服务平滑升级。通过 ReplicaSet 逐步替换旧 Pod，保持服务可用。
+
+- 用户更新 Deployment（如修改镜像版本）。
+- 创建新 ReplicaSet，逐步增加新 Pod。
+- 缩减旧 ReplicaSet，删除旧 Pod。
+
+关键参数：maxSurge 和 maxUnavailable
+
+- **maxSurge**：更新期间最多超出的 Pod 数（相对于期望 replicas）。
+- **maxUnavailable**：更新期间最多不可用的 Pod 数。
+
+### 6.3 Service 四层负载均衡
+
+在 Kubernetes 中，**Service** 是一种抽象，用于定义一组 Pod 的访问策略，并提供稳定的网络端点（Endpoint）和负载均衡功能。Service 的核心作用是实现 **四层负载均衡**，即基于 IP 和端口（TCP/UDP）的负载均衡。
+
+Service 是 Kubernetes 中的一种资源对象，用于将一组 Pod 暴露给集群内部或外部的客户端。它解决了以下问题：
+1. **Pod 动态性**：Pod 的 IP 地址是动态分配的，可能会随着 Pod 的创建、销毁或重新调度而改变。Service 提供了一个稳定的 IP 和 DNS 名称，客户端无需关心 Pod 的具体 IP。
+2. **负载均衡**：Service 可以将流量均匀地分发到后端的多个 Pod，实现负载均衡。
+3. **服务发现**：Service 通过 DNS 名称提供服务发现功能，客户端可以通过 Service 名称访问后端 Pod。
+
+Service 工作在 OSI 模型的 **传输层（第四层）**，即基于 IP 和端口（TCP/UDP）进行负载均衡。它的核心功能包括：
+1. **IP 和端口映射**：Service 提供一个虚拟 IP（ClusterIP）和端口，将流量转发到后端 Pod 的 IP 和端口。
+2. **负载均衡算法**：默认使用轮询（Round Robin）算法将流量分发到后端 Pod。
+3. **健康检查**：通过 Pod 的 `readinessProbe` 和 `livenessProbe` 确保流量只转发到健康的 Pod。
+
+### 6.4 Service 类型
+
+1. **ClusterIP（默认类型）**：为 Service 分配一个集群内部的虚拟 IP，只能在集群内部访问。
+2. **NodePort**：在 ClusterIP 的基础上，在每个节点的 IP 上开放一个静态端口（默认范围：30000-32767），允许外部通过节点 IP 和端口访问 Service。
+3. **LoadBalancer**：在 NodePort 的基础上，通过云服务商（如 AWS、GCP、Azure）创建一个外部负载均衡器，将流量转发到 Service。
+
+## 7 高级调度机制
+
+### 7.1 污点与容忍
+
+- **污点（Taint）**：
+    - 标记在节点上，表示 " 拒绝 " 某些 Pod 调度，除非 Pod 显式容忍。
+    - 格式：key=value:effect（effect 有三种：NoSchedule、PreferNoSchedule、NoExecute）。
+- **容忍（Toleration）**：
+    - 标记在 Pod 上，表示可以 " 容忍 " 某些污点，允许调度到对应节点。
+
+- **NoSchedule**：新 Pod 不可调度到该节点，已运行的 Pod 不受影响。
+- **PreferNoSchedule**：尽量不调度到该节点，但资源不足时仍可调度（软约束）。
+- **NoExecute**：新 Pod 不可调度，已运行的不容忍 Pod 会被驱逐。
+
+### 7.2 亲和性调度
+
+亲和性调度控制 Pod 与节点或 Pod 之间的调度关系，支持软策略和硬约束。
+
+- **Node Affinity**：控制 Pod 与节点的亲和性。
+- **Pod Affinity**：控制 Pod 与其他 Pod 的亲和性（如同节点运行）。
+- **Pod Anti-Affinity**：避免 Pod 集中（如分散部署）。
+
+## 8 云原生生态
+
+### 8.1 服务网格（Service Mesh）
+
+服务网格是一个专门的基础设施层，用于管理微服务架构中服务之间的通信。它通过代理（通常是 Sidecar）接管所有网络流量，提供流量控制、安全性和可观测性，而无需修改应用代码。
+- 在微服务架构中，服务间通信复杂（如负载均衡、重试、超时、加密），传统方式需要在每个服务中实现这些逻辑，增加了开发和维护成本。
+- 服务网格将这些功能下沉到基础设施层，解耦应用与网络逻辑。
+
+### 8.2 Istio：服务网格的代表实现
+
+Istio 是目前最流行的开源服务网格，基于 Kubernetes 构建，利用 **Envoy** 代理实现数据平面，**Istiod** 提供控制平面。
+- **数据平面**：由 Envoy 代理组成，运行在每个 Pod 的 Sidecar 中，负责实际的流量处理。
+- **控制平面**：由 Istiod 组成，统一管理和配置所有 Envoy 代理。
