@@ -17,8 +17,9 @@
 
 这种模型的 CPU 效率低，需要逐行处理和大量的函数调用开销，无法利用 CPU 的缓存局部性和 SIMD 指令，不适应批量处理和向量化计算。因此，出现了一些替代模型，例如向量化模型。
 
-
 > [!NOTE] OLTP and OLAP
 > **OLTP（Online Transaction Processing，联机事务处理）**，支持高并发、低延迟的**实时事务操作**，例如增删改查（CRUD）。
-> **OLAP（Online Analytical Processing，联机分析处理）**，
-> 
+> **OLAP（Online Analytical Processing，联机分析处理）**，支持复杂的**数据分析与决策**，例如统计报表、数据挖掘。
+
+## 2 SQL 执行流程
+
