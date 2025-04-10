@@ -8,7 +8,6 @@
 
 - 设数据库 $\text{DB} = (S_1, \dots, S_N)$ 是一个字符串集合（称为数据库），其字符来自一个共享的字母表 $\Sigma$，即对于所有 $i \in [1, N]$，有 $S_i \in \Sigma^*$。
 - 一个明文子串查询 $\text{Query} : \Sigma^* \times (\Sigma^*) \to \{0, 1\}^*$ 接收一个明文查询字符串 $q \in \Sigma^*$ 和明文数据库 $\text{DB} = (S_1, \dots, S_N)$ 作为输入，并输出一个索引对的列表 $((i_k, j_k))_{k=1}^l$，其中满足以下条件：
-
  $$
   S_{i_k}[j_k, (j_k + |q|)] = q, \quad \forall k = 1, \dots, l.
  $$
