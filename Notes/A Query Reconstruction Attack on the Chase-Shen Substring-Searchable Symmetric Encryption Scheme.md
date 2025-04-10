@@ -521,6 +521,11 @@ $$
     $$
      这是因为用于检索这些初始路径的 PRF 值表明 PRF 的输入长度为 3。
 
+
+
+
+
+
 1. **联合分析 $q_1$ 和 $q_2$**
    通过同时观察 $q_1$ 和 $q_2$，一个半诚实的攻击者可以立即推断以下信息：
 
@@ -747,10 +752,12 @@ CS 方案在设置阶段和查询阶段都会泄露一些信息，这些信息�
      - 温度 $T$。
    - 根据输入和一定的随机性，输出 0 或 1。
 
+### 17.1 模拟退火算法的完整运行过程
+
 以下是五个子程序在模拟退火算法中的组合步骤：
 
 1. **初始解生成：**
-   - 执行 $\text{Initial_solution(CandSet)}$ 来生成一个初始猜测 $\text{guess}$。
+   - 执行 $\text{Initial\_solution(CandSet)}$ 来生成一个初始猜测 $\text{guess}$。
 
 2. **温度初始化：**
    - 初始化一个温度 $T$。
@@ -758,8 +765,8 @@ CS 方案在设置阶段和查询阶段都会泄露一些信息，这些信息�
 3. **迭代过程：**
    - 随后，以下过程将在固定的迭代次数内重复执行：
      - 调用冷却子程序 $\text{Cooling(T)}$，生成一个新的温度 $T'$。同时，计算当前猜测的邻居 $\text{guess'} \leftarrow \text{Neighbour(guess, CandSet)}$。
-     - 对新的猜测 $\text{guess'}$ 计算得分 $\text{sc'} \leftarrow \text{score(guess', (tk_{i,1}, \ldots, tk_{i,m_i})_{i=1}^l, (vol_i)_{i=1}^l, Aux)}$。
-       假设旧的得分为 $\text{sc} \leftarrow \text{score(guess, (tk_{i,1}, \ldots, tk_{i,m_i})_{i=1}^l, (vol_i)_{i=1}^l, Aux)}$。
-     - 调用 $\text{Accept_prob(sc, sc', T)}$，输出 0 或 1。
+     - 对新的猜测 $\text{guess'}$ 计算得分 $\text{sc}{\prime} \leftarrow \text{score}\left(\text{guess}{\prime},\, \left(tk_{i,1}, \ldots, tk_{i,m_i}\right)_{i=1}^l,\, (vol_i)_{i=1}^l,\, \text{Aux}\right)$。
+       假设旧的得分为 $\text{sc} \leftarrow \text{score}\left(\text{guess},\, \left(tk_{i,1}, \ldots, tk_{i,m_i}\right)_{i=1}^l,\, (vol_i)_{i=1}^l,\, \text{Aux}\right)$。
+     - 调用 $\text{Accept\_prob(sc, sc', T)}$，输出 0 或 1。
      - 如果输出为 0，则保持当前猜测不变，模拟退火进入下一次迭代。
      - 如果输出为 1，则用新的猜测 $\text{guess'}$ 替换旧的猜测 $\text{guess}$，模拟退火进入下一次迭代。
